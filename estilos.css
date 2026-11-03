@@ -648,3 +648,11 @@ details.demo summary{cursor:pointer; font-weight:600; min-height:32px; display:f
 .hoja.ventana .btns{margin-top:12px}
 /* Vista previa de la descripción en el Resumen del INC (3 líneas) */
 .desc-previa{overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; margin:0}
+
+/* Banner del Chat del INC: "Unirme al INC" (tomarlo sin salir del chat) */
+.unirse-inc{position:relative; display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:12px 12px 12px 16px;
+  border-radius:var(--radio-sm); background:var(--panel); border:1px solid var(--linea)}
+.unirse-inc::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px; border-radius:var(--radio-sm) 0 0 var(--radio-sm); background:var(--warn)}
+.unirse-inc .txt{flex:1 1 180px; min-width:0; display:flex; flex-direction:column; gap:2px; font-size:14px; line-height:1.35}
+.unirse-inc .txt small{font-size:12px; color:var(--suave)}
+.unirse-inc .boton{min-height:44px}

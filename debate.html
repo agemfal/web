@@ -104,6 +104,21 @@ function resumenMensaje(m){
     </span></li>`;
 }
 
+// "Unirme al INC": quien llega al chat (convocado, mención, aviso) puede tomar el INC por su equipo sin salir del chat.
+// Es la misma acción que Tomar en Incidentes: el backend decide si se ofrece (acción "tomar" del equipo) y detiene el escalamiento.
+function bannerUnirse(d){
+  const i = d.incidente;
+  if (!i.abierto) return "";
+  const conTomar = (i.equipos || []).filter(e => (e.acciones || []).some(a => a.accion === "tomar"));
+  const eq = conTomar.find(e => e.estado === "pendiente") || conTomar[0];
+  if (!eq) return "";
+  const clave = `${i.inc}:${eq.id}`, pendiente = App.pendientes.has(clave);
+  const estado = eq.asignado ? `${eq.nombre}: lo tiene ${eq.asignado.nombre}` : eq.estado === "reconocido" ? `${eq.nombre}: reconocido, sin responsable` : `${eq.nombre}: nadie lo tomó todavía`;
+  return `<div class="unirse-inc"><span class="txt"><b>${esc(estado)}</b><small>${pendiente ? "Lo estás tomando: se confirma en 5 segundos." : "Unite al INC para trabajarlo: queda a tu nombre y se detiene el escalamiento."}</small></span>
+    ${pendiente ? `<button class="boton" data-accion="deshacer:${esc(i.inc)}:${esc(eq.id)}">Deshacer</button>`
+      : `<button class="boton primario" data-accion="inc:tomar:${esc(i.inc)}:${esc(eq.id)}">${icono("mano")}Unirme al INC · ${esc(eq.nombre)}</button>`}</div>`;
+}
+
 // Descripción del INC: vista previa de 3 líneas; el texto completo se abre en una ventana flotante
 const DESC_LARGA = 220;
 function bloqueDescripcion(d){
@@ -377,6 +392,7 @@ App.iniciar({
     return `<button class="boton chico" data-accion="volver" style="justify-self:start">← Volver</button>
       <div class="ficha-cab"><h2>${esc(deb.titulo)}</h2>
         <div class="tinc-meta"><span class="mono-inc">${esc(deb.inc)}</span>${deb.prioridad ? C.chipInc(deb.prioridad) : ""}${C.chipSla(i.sla)}${C.chip(deb.estado === "abierto" ? "ok" : "warn", "Chat " + deb.estado_txt.toLowerCase())}</div></div>
+      ${bannerUnirse(deb)}
       <div class="pestanas" role="tablist">${PEST.map(([id, txt, n]) => `<button role="tab" aria-selected="${t === id}" class="${t === id ? "activa" : ""}" data-accion="t:${id}">${txt}${n ? ` <span class="pastilla" ${id === "chat" ? 'style="background:var(--ok);color:#0b0f17"' : 'style="background:var(--warn);color:#0b0f17"'}>${n}</span>` : ""}</button>`).join("")}</div>
       ${contenido}`;
   },
