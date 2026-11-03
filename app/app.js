@@ -430,6 +430,8 @@ const App = {
     document.body.setAttribute("data-rol", this.rol);
     /* ===== FIN RBAC ===== */
     this.pagina = pagina;
+    document.addEventListener("pointerdown", () => this.desbloquearAudio(), { once:true, passive:true });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && sessionStorage.getItem("token")) this.revisarNotificaciones(); });
     this.armarEstructura();
     this.cargar(false);
     // RBAC: rol, nombre y permisos los decide el backend (GET /me)
@@ -437,6 +439,7 @@ const App = {
       this.sincronizarSesion().then(d => { if (d && this.datos) this.redibujar(); });
       // Campana = notificaciones (menciones, convocatorias, debates…): número de no leídas y aviso al llegar una nueva
       this.revisarNotificaciones(true);
+      this.reanudarAlarma();
       setInterval(() => { if (!document.hidden) this.revisarNotificaciones(); }, 8000);
     }
     if (CONFIG.REFRESCO_SEG > 0) {
@@ -513,6 +516,68 @@ const App = {
     return el;
   },
 
+  /* ===== ALARMA EN PANTALLA =====
+     Escalamientos, SLA vencido y convocatoria general: aviso a pantalla completa con sonido y vibración que se repite
+     hasta que la persona toma el INC, lo abre o lo silencia. Se apaga sola si otro equipo toma el INC. Se puede desactivar en Perfil. */
+  ALARMA_TIPOS: ["escalamiento", "sla", "convocatoria_general"],
+  _alarma: null, _audio: null,
+  alarmaOn(){ try { return localStorage.getItem("alarmaSonora") !== "0"; } catch { return true; } },
+  alarmaConfigurar(on){ try { localStorage.setItem("alarmaSonora", on ? "1" : "0"); } catch {} if (!on) this.cerrarAlarma(); },
+  // El navegador solo deja sonar después de un toque: se prepara el audio con el primer toque de la sesión
+  desbloquearAudio(){
+    try {
+      const A = window.AudioContext || window.webkitAudioContext;
+      if (!A) return null;
+      this._audio ||= new A();
+      if (this._audio.state === "suspended") this._audio.resume();
+      return this._audio;
+    } catch { return null; }
+  },
+  sonar(){
+    const c = this.desbloquearAudio();
+    const suena = !!c && c.state === "running";
+    if (suena) [[880, 0], [660, .28]].forEach(([hz, t]) => {
+      const o = c.createOscillator(), g = c.createGain(), ini = c.currentTime + t;
+      o.type = "square"; o.frequency.value = hz;
+      g.gain.setValueAtTime(.0001, ini); g.gain.exponentialRampToValueAtTime(.25, ini + .02); g.gain.exponentialRampToValueAtTime(.0001, ini + .25);
+      o.connect(g).connect(c.destination); o.start(ini); o.stop(ini + .26);
+    });
+    try { if (navigator.userActivation?.hasBeenActive !== false) navigator.vibrate?.([300, 120, 300]); } catch {}   // el navegador solo deja vibrar después de un toque
+    return suena;
+  },
+  alarma(n, { prueba = false } = {}){
+    if (!prueba && !this.alarmaOn()) return;
+    this.cerrarAlarma();
+    const tipo = { escalamiento:"Escalamiento", sla:"SLA", convocatoria_general:"Convocatoria general" }[n.tipo] || "Alarma";
+    const el = document.createElement("div");
+    el.id = "alarma"; el.className = "alarma"; el.setAttribute("role", "alertdialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Alarma: " + n.titulo);
+    el.innerHTML = `<div class="alarma-caja"><div class="alarma-ic">${icono("alerta")}</div><small class="alarma-tipo">${esc(tipo)}</small>
+      <h2>${esc(n.titulo)}</h2>${n.cuerpo ? `<p>${esc(n.cuerpo)}</p>` : ""}
+      <p class="alarma-sonido" hidden>Tocá la pantalla para activar el sonido.</p>
+      <div class="btns">${n.puede_tomar && n.inc && n.team_id ? `<button class="boton primario" data-al="tomar">${icono("mano")}Tomar el INC</button>` : ""}
+        ${n.enlace && !prueba ? `<button class="boton" data-al="ver">Ver</button>` : ""}<button class="boton" data-al="silenciar">Silenciar</button></div></div>`;
+    document.body.append(el);
+    const tituloOrig = document.title.replace(/^🚨 /, "");
+    const tic = () => { el.querySelector(".alarma-sonido").hidden = this.sonar(); document.title = document.title.startsWith("🚨") ? tituloOrig : "🚨 " + n.titulo.slice(0, 40); };
+    this._alarma = { n, el, tituloOrig, timer:setInterval(tic, 3000) };
+    el.addEventListener("pointerdown", () => this.desbloquearAudio(), { once:true });
+    el.querySelector("[data-al=silenciar]").onclick = () => this.cerrarAlarma();
+    el.querySelector("[data-al=ver]")?.addEventListener("click", () => { this.cerrarAlarma(); location.href = n.enlace; });
+    el.querySelector("[data-al=tomar]")?.addEventListener("click", () => { this.cerrarAlarma(); this.accionInc(`inc:tomar:${n.inc}:${n.team_id}`); });
+    if (!prueba) { try { sessionStorage.setItem("alarmaActual", JSON.stringify(n)); } catch {} }
+    tic();
+    el.querySelector("[data-al]")?.focus();
+  },
+  cerrarAlarma(){
+    const a = this._alarma;
+    if (a) { clearInterval(a.timer); a.el.remove(); document.title = a.tituloOrig; this._alarma = null; }
+    try { sessionStorage.removeItem("alarmaActual"); navigator.vibrate?.(0); } catch {}
+  },
+  // Al cambiar de pantalla la alarma sigue hasta que se la atiende
+  reanudarAlarma(){
+    try { const n = JSON.parse(sessionStorage.getItem("alarmaActual") || "null"); if (n && !this._alarma) this.alarma(n); } catch {}
+  },
+
   /* ===== INICIO RBAC: API del módulo ===== */
   async revisarNotificaciones(primera = false){
     const r = await this.api("GET", "/notificaciones?no_leidas=1&limite=20");
@@ -521,7 +586,15 @@ const App = {
     if (b) { b.hidden = !no_leidas; b.textContent = no_leidas > 99 ? "99+" : no_leidas; }
     let vistas; try { vistas = new Set(JSON.parse(sessionStorage.getItem("notifVistas") || "[]")); } catch { vistas = new Set(); }
     const nuevas = notificaciones.filter(n => !vistas.has(n.id) && !n.silenciosa);   // fuera de mi horario: sin aviso emergente
-    if (nuevas.length && !primera && !/notificaciones\.html$/.test(location.pathname)) {
+    // Alarma: lo que sigue sin atender y hay que accionar. Al abrir la app solo si todavía se puede tomar.
+    const esAlarma = x => this.ALARMA_TIPOS.includes(x.tipo) && !x.silenciosa;
+    const candidatas = nuevas.filter(x => esAlarma(x) && (!primera || x.puede_tomar));
+    const sonada = candidatas.find(x => x.puede_tomar) || candidatas[0];
+    if (sonada && this.alarmaOn()) this.alarma(sonada);
+    // Si otro equipo ya tomó el INC, la alarma de ese aviso se apaga sola
+    const act = this._alarma?.n;
+    if (act?.puede_tomar && act.id !== "prueba" && !notificaciones.some(x => x.id === act.id && x.puede_tomar)) { this.cerrarAlarma(); this.aviso("El INC ya fue tomado", 3000); }
+    if (!sonada && nuevas.length && !primera && !/notificaciones\.html$/.test(location.pathname)) {
       const n = nuevas.find(x => x.puede_tomar) || nuevas[0];      // un escalamiento que se puede tomar va primero, con su botón
       // En la demo la llamada no sale: se avisa que en producción sonaría el teléfono
       this.aviso(`${n.con_llamada ? "Llamada (simulada) · " : ""}${n.titulo}${nuevas.length > 1 ? ` (+${nuevas.length - 1})` : ""}`, 6000,
