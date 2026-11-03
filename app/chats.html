@@ -52,6 +52,17 @@ const PASA = {
   sintomar: c => !c.archivado && !c.tomado
 };
 
+// "Unirme al INC": tomarlo desde la lista, sin abrir el chat ni ir a Incidentes (el backend dice si hay acción "tomar" para mi equipo)
+function botonUnirse(c){
+  if (c.archivado) return "";
+  const conTomar = (c.equipos || []).filter(e => (e.acciones || []).some(a => a.accion === "tomar"));
+  const eq = conTomar.find(e => e.estado === "pendiente") || conTomar[0];
+  if (!eq) return "";
+  return App.pendientes.has(`${c.inc}:${eq.id}`)
+    ? `<span class="chat-l4"><button class="boton chico chat-unirse" data-accion="deshacer:${esc(c.inc)}:${esc(eq.id)}">Tomando · Deshacer</button></span>`
+    : `<span class="chat-l4"><button class="boton chico primario chat-unirse" data-accion="inc:tomar:${esc(c.inc)}:${esc(eq.id)}">${icono("mano")}Unirme al INC · ${esc(eq.nombre)}</button></span>`;
+}
+
 function filaChat(c){
   const d = c.debate, crit = c.prioridad != null && sevInc(c.prioridad) === "crit";
   const sub = d?.ultimo ? `<b>${esc(d.ultimo.autor || "")}:</b> ${esc(d.ultimo.texto)}`
@@ -64,6 +75,7 @@ function filaChat(c){
       <span class="chat-l1"><b>${esc(c.titulo)}</b><small>${esc(horaChat(c.fecha))}</small></span>
       <span class="chat-l2"><span class="chat-prev">${sub}</span>${d?.no_leidos ? `<span class="chat-num">${d.no_leidos}</span>` : ""}</span>
       <span class="chat-l3">${c.prioridad != null ? `<b class="chat-cat ${crit ? "crit" : "warn"}">${esc(nombreInc(c.prioridad))}</b> · ` : ""}${esc(c.inc)}${c.equipos.length ? " · " + esc(c.equipos.map(e => e.nombre).join(", ")) : ""}${d ? ` · ${d.participantes_total} en el chat` : ""} ${estado}</span>
+      ${botonUnirse(c)}
     </span></li>`;
 }
 
@@ -90,6 +102,7 @@ App.iniciar({
         ${activos.map(filaChat).join("") || `<li class="chat-vacio">${q ? "Ningún chat coincide con la búsqueda" : "No hay chats en este filtro"}</li>`}
       </ul>`;
   },
+  alCambiarInc: () => recargar(),
   alMontar: () => {
     if (!datos && !error) recargar();
     const b = document.getElementById("fBuscar");
