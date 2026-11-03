@@ -9,7 +9,7 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=30"></script>
+<script src="rbac-demo.js?v=31"></script>
 <script src="app.js"></script>
 <script>
 /* CHATS — todos los INC como lista de chats (estilo WhatsApp): último mensaje, hora y no leídos.
@@ -36,7 +36,7 @@ function horaChat(iso){
 
 // Un chat por INC abierto (con o sin debate) y uno por debate de INC ya cerrado
 function chats(){
-  const abiertos = datos.incidentes.map(i => ({ inc:i.inc, titulo:i.titulo, prioridad:i.prioridad, servicios:i.servicios, equipos:i.equipos, mio:i.mio,
+  const abiertos = datos.incidentes.map(i => ({ inc:i.inc, titulo:i.titulo, prioridad:i.prioridad, servicios:i.servicios, equipos:i.equipos, puedo_sumar_equipo:i.puedo_sumar_equipo, mio:i.mio,
     debate:i.debate, puede_abrir:i.puede_abrir, archivado:false,
     fecha: i.debate?.ultimo?.en || i.debate?.abierto_en || i.inicio,
     tomado: i.equipos.length && i.equipos.every(e => e.estado !== "pendiente") }));
@@ -52,15 +52,14 @@ const PASA = {
   sintomar: c => !c.archivado && !c.tomado
 };
 
-// "Unirme al INC": tomarlo desde la lista, sin abrir el chat ni ir a Incidentes (el backend dice si hay acción "tomar" para mi equipo)
+// "Unirme al INC" desde la lista: tomarlo, unirme a quien ya lo trabaja o sumar mi equipo (lo decide el backend)
 function botonUnirse(c){
   if (c.archivado) return "";
-  const conTomar = (c.equipos || []).filter(e => (e.acciones || []).some(a => a.accion === "tomar"));
-  const eq = conTomar.find(e => e.estado === "pendiente") || conTomar[0];
-  if (!eq) return "";
-  return App.pendientes.has(`${c.inc}:${eq.id}`)
-    ? `<span class="chat-l4"><button class="boton chico chat-unirse" data-accion="deshacer:${esc(c.inc)}:${esc(eq.id)}">Tomando · Deshacer</button></span>`
-    : `<span class="chat-l4"><button class="boton chico primario chat-unirse" data-accion="inc:tomar:${esc(c.inc)}:${esc(eq.id)}">${icono("mano")}Unirme al INC · ${esc(eq.nombre)}</button></span>`;
+  const ops = C.sumarse(c);
+  if (!ops.length) return "";
+  return `<span class="chat-l4">${ops.map(o => App.pendientes.has(`${c.inc}:${o.id}`)
+    ? `<button class="boton chico chat-unirse" data-accion="deshacer:${esc(c.inc)}:${esc(o.id)}">Sumándote · Deshacer</button>`
+    : `<button class="boton chico primario chat-unirse" data-accion="inc:${o.accion}:${esc(c.inc)}:${esc(o.id)}">${icono("mano")}Unirme al INC · ${esc(o.nombre)}</button>`).join("")}</span>`;
 }
 
 function filaChat(c){

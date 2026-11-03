@@ -88,7 +88,7 @@ const ReglasRBAC = (() => {
     "servicios_ins","servicios_del","productos_ins","productos_del","matrices_ins","matrices_ver","inc_equipo_upd","escalamientos_upd","config_upd","incidentes_upd","sla_avisos","solicitudes_ins","solicitudes_upd",
     "asignaciones_liberar","escalamientos_detener","debates_ins","debates_upd","participantes_ins","participantes_upd",
     "mensajes_ins","mensajes_upd","incidentes_ins","notificaciones","notificaciones_leer","auditoria","correos",
-    "sesiones_ins","sesiones_cerrar","sesiones_revocar_otras","catalogo_servicios"];
+    "sesiones_ins","sesiones_cerrar","sesiones_revocar_otras","catalogo_servicios","inc_colaboradores_ins","colaboradores_del"];
 
   /* ---------- Utilidades ---------- */
   const txt    = v => String(v ?? "").trim();
@@ -505,6 +505,9 @@ const ReglasRBAC = (() => {
 
   // Libera asignaciones de incidentes abiertos del usuario (en uno o todos sus equipos)
   function planLiberarAsignaciones(k, userId, teamIds = null){
+    // Si trabajaba INC como colaborador, también deja de figurar
+    if (arr(k.raw.incidentes_equipo).some(x => arr(x.colaboradores).includes(userId) && (!teamIds || teamIds.includes(x.team_id))))
+      k.plan.colaboradores_del.push({ user_id:userId, team_ids:teamIds });
     const libs = arr(k.raw.incidentes_equipo).filter(x => x.asignado_id === userId && (!teamIds || teamIds.includes(x.team_id)));
     libs.forEach(x => {
       k.plan.asignaciones_liberar.push({ incident_id:x.incident_id, team_id:x.team_id });
@@ -1279,6 +1282,7 @@ const ReglasRBAC = (() => {
       sla: i ? slaDe(raw, i) : null, puede_cambiar_categoria: i ? puedeCambiarCat(raw, auth, i) : false,
       abierto:!!i, inicio:iso(i?.inicio), afectados:i?.afectados ?? null, descripcion: txt(i?.descripcion) || null,
       servicios: arr(i?.servicios).map(id => { const s = raw.servicios.find(x => x.id === id); return { id, nombre:s?.nombre || id, red:s?.red || null }; }),
+      puedo_sumar_equipo: equiposParaSumar(raw, auth, i),
       equipos: i ? equiposInc(raw, auth, i) : d.equipos.map(id => ({ id, nombre:equipo(raw, id)?.nombre || null, responsable:ref(usuario(raw, responsable(raw, id)?.user_id)), acciones:[] }))
     };
   }
@@ -1569,7 +1573,7 @@ const ReglasRBAC = (() => {
 
   const ESTADO_INC_EQ_TXT = { pendiente:"Pendiente", reconocido:"Reconocido", resuelto:"Resuelto" };
   const incEquipo = (raw, inc, teamId) => arr(raw.incidentes_equipo).find(x => x.inc === inc && x.team_id === teamId)
-    || { inc, team_id:teamId, incident_id:null, estado_equipo:"pendiente", asignado_id:null, reconocido_por:null, reconocido_en:null };
+    || { inc, team_id:teamId, incident_id:null, estado_equipo:"pendiente", asignado_id:null, colaboradores:[], reconocido_por:null, reconocido_en:null };
   const corridaDe = (raw, inc, teamId) => arr(raw.escalamientos_vivos).find(x => x.inc === inc && x.team_id === teamId) || null;
   const esCritico = (raw, p) => p != null && sevDe(raw, p) === "crit";
 
@@ -1604,12 +1608,20 @@ const ReglasRBAC = (() => {
     return d.horario.franjas.map(f => `${f.dias.map(x => DIA[x]).join(" ")} ${f.desde}–${f.hasta}`).join(" · ") + (d.criticos_siempre ? " · críticos siempre" : "");
   };
 
+  // Equipos míos que todavía no están en el INC y que puedo sumarle (permiso agregar_equipo en ese equipo)
+  const equiposParaSumar = (raw, auth, i) => !auth || !i ? [] : auth.equipos
+    .filter(x => !arr(i.equipos).includes(x.id) && equipo(raw, x.id)?.estado === "activo" && arr(x.permisos).includes("agregar_equipo"))
+    .map(x => ({ id:x.id, nombre:equipo(raw, x.id)?.nombre || x.nombre || null }));
+
   function accionesIncEquipo(raw, auth, st){
     const out = [];
     if (!auth) return out;
     const ctx = { team_id:st.team_id };
-    if (["pendiente", "reconocido"].includes(st.estado_equipo) && st.asignado_id !== auth.id && puede(auth, "tomar_inc", ctx, raw))
+    if (["pendiente", "reconocido"].includes(st.estado_equipo) && st.asignado_id !== auth.id && puede(auth, "tomar_inc", ctx, raw)) {
+      // Varias personas pueden trabajar el mismo INC: si alguien ya lo tiene, "Unirme" suma sin sacárselo; "Tomarlo yo" lo traspasa
+      if (st.asignado_id && !arr(st.colaboradores).includes(auth.id)) out.push({ accion:"unirse", etiqueta:"Unirme" });
       out.push({ accion:"tomar", etiqueta: st.asignado_id ? "Tomarlo yo" : "Tomar" });
+    }
     return out;     // "reconocer" sigue disponible por API (integraciones), pero la app solo ofrece Tomar
   }
   // Equipos de un INC abierto con su estado, quién lo tomó, cómo va el escalamiento y qué puede hacer quien mira
@@ -1620,6 +1632,7 @@ const ReglasRBAC = (() => {
         id, nombre:t?.nombre || null, responsable:ref(usuario(raw, responsable(raw, id)?.user_id)),
         estado:st.estado_equipo, estado_txt: st.asignado_id ? "Tomado" : ESTADO_INC_EQ_TXT[st.estado_equipo] || st.estado_equipo,
         asignado:ref(usuario(raw, st.asignado_id)), reconocido_por:ref(usuario(raw, st.reconocido_por)), reconocido_en:iso(st.reconocido_en),
+        colaboradores: arr(st.colaboradores).map(uid => ref(usuario(raw, uid))).filter(Boolean),
         escalamiento: run ? { estado:run.estado, motivo:run.motivo || null, nivel:run.nivel_actual, niveles:arr(run.niveles).length,
                               proximo_en: run.estado === "esperando" ? iso(run.proximo_en) : null }
                           : { estado: mx ? "sin_iniciar" : "sin_matriz", motivo:null, nivel:0, niveles:mx?.niveles.length || 0, proximo_en:null },
@@ -1629,24 +1642,65 @@ const ReglasRBAC = (() => {
     });
   }
 
-  // POST /incidentes/:inc/acciones { accion: "tomar" | "reconocer", equipo_id } — WF47a
+  // Suma al usuario al chat del INC si todavía no participa (lo hace al unirse o sumar su equipo)
+  function planSumarAlChat(k, raw, auth, inc, texto){
+    const d = arr(raw.debates).find(x => x.inc === inc && x.estado === "abierto");
+    if (!d) return;
+    if (!participacion(raw, d.id, auth.id)) k.plan.participantes_ins.push({ id:k.id(), debate_id:d.id, user_id:auth.id, origen:"voluntario" });
+    mensajeSistema(k, d.id, texto);
+  }
+
+  // "Sumar mi equipo": un equipo que no figuraba en el INC entra con quien lo suma como responsable del trabajo
+  function sumarEquipoInc(k, auth, raw, i, teamId){
+    const t = equipo(raw, teamId);
+    if (!t || t.estado !== "activo") return k.fallo(404, "EQUIPO_INEXISTENTE", "El equipo no existe o está inactivo");
+    if (i.equipos.includes(teamId)) return k.fallo(409, "EQUIPO_YA_EN_INC", `${t.nombre} ya está en el incidente`);
+    if (!auth.equipos.some(x => x.id === teamId)) return k.fallo(403, "NO_ES_DE_TU_EQUIPO", "Solo podés sumar un equipo al que pertenecés");
+    const p = k.permiso("agregar_equipo", { team_id:teamId }); if (p) return p;
+    k.plan.inc_equipo_upd.push({ inc:i.inc, team_id:teamId, incident_id:null, estado_equipo:"reconocido", asignado_id:auth.id, reconocido_por:auth.id, reconocido_en:k.ahora });
+    k.aud("INC_EQUIPO_SUMADO", "incidente", i.inc, teamId, { antes:{ equipos:i.equipos.length }, despues:{ equipos:i.equipos.length + 1, asignado_id:auth.id } });
+    planSumarAlChat(k, raw, auth, i.inc, `🧩 ${auth.nombre} sumó a ${t.nombre} al incidente`);
+    k.notificar(unicos([...i.equipos.map(id => responsable(raw, id)?.user_id), responsable(raw, teamId)?.user_id]).filter(id => id && id !== auth.id),
+      `${i.inc} · equipo sumado`, `${auth.nombre} sumó a ${t.nombre} al incidente.`, teamId, ["app"], { tipo:"general", enlace:"incidentes.html" });
+    return k.exito(200, { tipo:"incidente", inc:i.inc });
+  }
+
+  // POST /incidentes/:inc/acciones { accion: "tomar" | "reconocer" | "unirse" | "sumar_equipo", equipo_id } — WF47a
+  //   tomar: me quedo con el INC (el titular anterior sigue como colaborador) · unirse: trabajo el INC junto a quien ya lo tiene
+  //   sumar_equipo: mi equipo no estaba en el INC y entra
   function accionIncidente(e, auth, raw){
     const k = contexto(e, auth, raw, "incidente"), b = e.body, inc = txt(e.params.inc).toUpperCase(), teamId = txt(b.equipo_id);
     k.team_id = equipo(raw, teamId) ? teamId : null;
     const no = sinSesion(k); if (no) return no;
-    const accion = txt(b.accion).toLowerCase(), PERM = { tomar:"tomar_inc", reconocer:"ack_inc" };
-    if (!PERM[accion]) return k.fallo(400, "ACCION_INVALIDA", "La acción debe ser tomar o reconocer");
+    const accion = txt(b.accion).toLowerCase(), PERM = { tomar:"tomar_inc", reconocer:"ack_inc", unirse:"tomar_inc", sumar_equipo:"agregar_equipo" };
+    if (!PERM[accion]) return k.fallo(400, "ACCION_INVALIDA", "La acción debe ser tomar, reconocer, unirse o sumar_equipo");
     const i = incidenteDe(raw, inc);
     if (!i) return k.fallo(404, "INC_INEXISTENTE", "El incidente no existe o ya no está abierto");
+    if (accion === "sumar_equipo") return sumarEquipoInc(k, auth, raw, i, teamId);
     if (!i.equipos.includes(teamId)) return k.fallo(422, "EQUIPO_INVALIDO", "Ese equipo no está en el incidente");
     const p = k.permiso(PERM[accion], { team_id:teamId }); if (p) return p;
     const t = equipo(raw, teamId), st = incEquipo(raw, inc, teamId);
     const valida = accion === "reconocer" ? st.estado_equipo === "pendiente" : accionesIncEquipo(raw, auth, st).some(a => a.accion === accion);
     if (!valida)
-      return k.fallo(409, "ESTADO_INVALIDO", accion === "reconocer" ? `${t.nombre} ya reconoció este incidente` : "Ya lo tenés tomado vos");
+      return k.fallo(409, "ESTADO_INVALIDO", accion === "reconocer" ? `${t.nombre} ya reconoció este incidente` : accion === "unirse" ? "Ya estás trabajando este incidente" : "Ya lo tenés tomado vos");
+    if (accion === "unirse") {
+      const antes = arr(st.colaboradores);
+      k.plan.inc_colaboradores_ins.push({ inc, incident_id:st.incident_id || null, team_id:teamId, user_id:auth.id });
+      k.aud("INC_UNIRSE", "incidente", inc, teamId, { antes:{ colaboradores:antes }, despues:{ colaboradores:[...antes, auth.id] } }, { datos:{ titular_id:st.asignado_id || null } });
+      planSumarAlChat(k, raw, auth, inc, `➕ ${auth.nombre} se unió al incidente por ${t.nombre}`);
+      k.notificar(unicos([st.asignado_id, responsable(raw, teamId)?.user_id]).filter(id => id && id !== auth.id),
+        `${inc} · se sumó ${auth.nombre}`, `${t.nombre}: ${auth.nombre} trabaja el incidente junto al equipo.`, teamId, ["app"], { tipo:"general", enlace:"incidentes.html" });
+      return k.exito(200, { tipo:"incidente", inc });
+    }
     const asignado_id = accion === "tomar" ? auth.id : (st.asignado_id || null);
     k.plan.inc_equipo_upd.push({ inc, team_id:teamId, incident_id:st.incident_id || null, estado_equipo:"reconocido", asignado_id,
       reconocido_por: st.reconocido_por || auth.id, reconocido_en: st.reconocido_en || k.ahora });
+    if (accion === "tomar") {
+      // El titular anterior no pierde el INC: pasa a colaborar. Si yo ya colaboraba, dejo de figurar como colaborador.
+      if (st.asignado_id && st.asignado_id !== auth.id && !arr(st.colaboradores).includes(st.asignado_id))
+        k.plan.inc_colaboradores_ins.push({ inc, incident_id:st.incident_id || null, team_id:teamId, user_id:st.asignado_id });
+      if (arr(st.colaboradores).includes(auth.id)) k.plan.colaboradores_del.push({ user_id:auth.id, team_ids:[teamId], inc });
+    }
     const run = corridaDe(raw, inc, teamId);
     if (run && run.estado === "esperando") k.plan.escalamientos_upd.push({ ...run, estado:"fin", motivo:"reconocido", proximo_en:null, fin_en:k.ahora });
     k.aud(accion === "tomar" ? "INC_TOMAR" : "INC_ACK", "incidente", inc, teamId,
@@ -1907,7 +1961,7 @@ const ReglasRBAC = (() => {
     const porInc = Object.fromEntries(arr(raw.debates).map(d => [d.inc, d]));
     const incidentes = arr(raw.incidentes).slice().sort((a, b) => a.prioridad - b.prioridad || String(a.inicio).localeCompare(String(b.inicio)))
       .map(i => ({ inc:i.inc, titulo:i.titulo, prioridad:i.prioridad, categoria:vistaCategoria(raw, i.prioridad), inicio:iso(i.inicio), servicios:arr(i.servicios),
-        equipos:equiposInc(raw, auth, i), mio: i.equipos.some(t => auth.equipos.some(x => x.id === t)),
+        equipos:equiposInc(raw, auth, i), puedo_sumar_equipo:equiposParaSumar(raw, auth, i), mio: i.equipos.some(t => auth.equipos.some(x => x.id === t)),
         sla:slaDe(raw, i), escalado:escaladoInc(raw, i), puede_cambiar_categoria:puedeCambiarCat(raw, auth, i),
         debate: porInc[i.inc] ? vistaDebate(raw, auth, porInc[i.inc]) : null,
         puede_abrir: !porInc[i.inc] && tiene(auth, "escribir_chat") }));
@@ -2772,6 +2826,15 @@ const SimuladorRBAC = (() => {
       let x = e.incidentes_equipo.find(y => y.inc === c.inc && y.team_id === c.team_id);
       if (!x) e.incidentes_equipo.push(x = { incident_id:c.incident_id || null, inc:c.inc, team_id:c.team_id });
       Object.assign(x, { estado_equipo:c.estado_equipo, asignado_id:c.asignado_id ?? null, reconocido_por:c.reconocido_por ?? null, reconocido_en:c.reconocido_en ?? null });
+    }
+    for (const c of L("colaboradores_del")) {  // quien se va deja de figurar como colaborador (en un INC o en todos)
+      e.incidentes_equipo.filter(x => (!c.inc || x.inc === c.inc) && (!Array.isArray(c.team_ids) || c.team_ids.includes(x.team_id)))
+        .forEach(x => { x.colaboradores = (x.colaboradores || []).filter(u => u !== c.user_id); });
+    }
+    for (const c of L("inc_colaboradores_ins")) {  // varias personas en el mismo INC
+      let x = e.incidentes_equipo.find(y => y.inc === c.inc && y.team_id === c.team_id);
+      if (!x) e.incidentes_equipo.push(x = { incident_id:c.incident_id || null, inc:c.inc, team_id:c.team_id, estado_equipo:"reconocido", asignado_id:null });
+      x.colaboradores = [...new Set([...(x.colaboradores || []), c.user_id])];
     }
     for (const c of L("escalamientos_upd")) { // corrida de escalamiento por INC y equipo
       const i = e.escalamientos_vivos.findIndex(y => y.inc === c.inc && y.team_id === c.team_id);

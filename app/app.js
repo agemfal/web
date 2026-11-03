@@ -224,7 +224,8 @@ const C = {
   equiposInc: (i, compacto = false) => `<div class="eq-inc ${compacto ? "compacto" : ""}">${(i.equipos || []).map(e => {
     const esc_ = e.escalamiento || {};
     const pendiente = App.pendientes.has(`${i.inc}:${e.id}`);
-    const [ic, estado] = pendiente ? ["mano", "Lo estás tomando · se confirma en 5 s"] : e.asignado ? ["mano", `Tomado por ${e.asignado.nombre}`] : e.estado === "reconocido" ? ["check", `Reconocido${e.reconocido_por ? " por " + e.reconocido_por.nombre : ""}`]
+    const con = (e.colaboradores || []).length ? ` · con ${e.colaboradores.map(c => c.nombre).join(", ")}` : "";
+    const [ic, estado] = pendiente ? ["mano", "Lo estás tomando · se confirma en 5 s"] : e.asignado ? ["mano", `Tomado por ${e.asignado.nombre}${con}`] : e.estado === "reconocido" ? ["check", `Reconocido${e.reconocido_por ? " por " + e.reconocido_por.nombre : ""}`]
       : esc_.estado === "esperando" ? (esc_.nivel === 0 ? ["reloj", `Sin tomar · aviso nivel 1 ${enCuanto(esc_.proximo_en)}`]
           : ["subir", `Sin tomar · avisado nivel ${esc_.nivel} de ${esc_.niveles}${esc_.proximo_en ? ` · nivel ${esc_.nivel + 1} ${enCuanto(esc_.proximo_en)}` : ""}`])
       : esc_.motivo === "agotado" ? ["alerta", "Sin tomar · escalamiento agotado"] : ["reloj", "Sin tomar"];
@@ -236,13 +237,27 @@ const C = {
   subnavInicio: activa => `<nav class="subnav" aria-label="Secciones de Inicio">${[["inicio", "escritorio.html", "Resumen"], ["servicios", "servicios.html", "Servicios"], ["reportes", "reportes.html", "Reportes"]]
     .map(([id, href, t]) => `<a href="${href}" class="${id === activa ? "activo" : ""}" ${id === activa ? 'aria-current="page"' : ""}>${t}</a>`).join("")}</nav>`,
 
+  /* Cómo puedo sumarme a un INC (lo decide el backend). Una opción por equipo mío: tomarlo si nadie lo tiene,
+     unirme a quien ya lo trabaja (varias personas), o sumar mi equipo si no figura. Devuelve [{ accion, id (equipo), nombre, estado, aviso }]. */
+  sumarse: i => {
+    const eqs = i.equipos || [], tiene = (e, a) => (e.acciones || []).some(x => x.accion === a), out = [];
+    eqs.filter(e => e.estado === "pendiente" && tiene(e, "tomar")).forEach(e => out.push({ accion:"tomar", id:e.id, nombre:e.nombre,
+      estado:`${e.nombre}: nadie lo tomó todavía`, aviso:"Unite al INC para trabajarlo: queda a tu nombre y se detiene el escalamiento." }));
+    eqs.filter(e => tiene(e, "unirse")).forEach(e => out.push({ accion:"unirse", id:e.id, nombre:e.nombre,
+      estado:`${e.nombre}: lo trabaja ${e.asignado?.nombre || "otra persona"}${(e.colaboradores || []).length ? " con " + e.colaboradores.map(c => c.nombre).join(", ") : ""}`,
+      aviso:"Podés sumarte sin sacarle el INC a nadie: trabajan juntos." }));
+    (i.puedo_sumar_equipo || []).forEach(t => out.push({ accion:"sumar_equipo", id:t.id, nombre:t.nombre,
+      estado:`${t.nombre} todavía no está en este INC`, aviso:"Sumá tu equipo para trabajarlo: queda a tu nombre." }));
+    return out;
+  },
+
   /* Tarjeta de INC única (datos de GET /debates). Divulgación progresiva:
      nivel 1 = fila compacta (categoría, SLA, Abrir) · nivel 2 = tarjeta con equipos, último mensaje y una acción principal.
      "Ver equipos" despliega el detalle por equipo (queda abierto aunque la pantalla se actualice). */
   tarjetaInc: (i, { nivel = 2 } = {}) => {
     const d = i.debate, sev = sevInc(i.prioridad), eqs = i.equipos || [], inc = esc(i.inc);
     const pend = eqs.filter(e => e.estado === "pendiente").length;
-    const mio = eqs.find(e => e.estado === "pendiente" && (e.acciones || []).some(a => a.accion === "tomar"));
+    const opciones = C.sumarse(i);
     const noLeidos = d?.no_leidos ? `<span class="pastilla" aria-label="${d.no_leidos} mensajes sin leer">${d.no_leidos}</span>` : "";
     const abrir = d || i.puede_abrir ? `<button class="boton chico" data-accion="abririnc:${inc}">${icono("mensaje")}Abrir${d ? ` · ${d.mensajes_total} msj` : ""}</button>` : "";
     if (nivel === 1) return `<div class="tinc n1 ${sev}"><span class="tinc-cuerpo"><b>${esc(i.titulo)}</b>
@@ -254,9 +269,9 @@ const C = {
       <div class="tinc-l2"><span class="mono-inc">${inc}</span> · ${eqs.length} equipo${eqs.length !== 1 ? "s" : ""}${eqs.length ? (pend ? ` · ${pend} sin tomar` : " · todos tomados") : ""}${d ? ` · ${d.participantes_total} en el chat` : ""}</div>
       ${d?.ultimo ? `<div class="tinc-ult">${esc(d.ultimo.autor || "")}: ${esc(d.ultimo.texto)}</div>` : ""}
       <div class="btns">
-        ${mio ? (App.pendientes.has(`${i.inc}:${mio.id}`)
-          ? `<button class="boton chico" data-accion="deshacer:${inc}:${esc(mio.id)}">${icono("mano")}Tomando · Deshacer</button>`
-          : `<button class="boton chico primario" data-accion="inc:tomar:${inc}:${esc(mio.id)}">${icono("mano")}Tomar · ${esc(mio.nombre)}</button>`) : ""}
+        ${opciones.map(mio => App.pendientes.has(`${i.inc}:${mio.id}`)
+          ? `<button class="boton chico" data-accion="deshacer:${inc}:${esc(mio.id)}">${icono("mano")}Sumándote · Deshacer</button>`
+          : `<button class="boton chico primario" data-accion="inc:${mio.accion}:${inc}:${esc(mio.id)}">${icono("mano")}${mio.accion === "tomar" ? "Tomar" : mio.accion === "unirse" ? "Unirme" : "Sumar"} · ${esc(mio.nombre)}</button>`).join("")}
         ${abrir}
         ${i.puede_cambiar_categoria ? `<button class="boton chico" data-accion="cat:${inc}:${i.prioridad}">${icono("cambiar")}Cambiar categoría</button>` : ""}
         ${eqs.length ? `<button class="boton chico" data-accion="vereq:${inc}" aria-expanded="${abiertos}">${icono("equipo")}${abiertos ? "Ocultar equipos" : `Ver equipos (${eqs.length})`}</button>` : ""}
@@ -647,12 +662,13 @@ const App = {
 
   accionInc(id){
     const [, accion, inc, equipo] = id.split(":");
-    this.diferir(`${inc}:${equipo}`, `Vas a tomar ${inc}. Se confirma en 5 segundos.`, async salida => {
+    const T = { tomar:["Vas a tomar", "Tomaste"], unirse:["Vas a unirte a", "Te uniste a"], sumar_equipo:["Vas a sumar tu equipo a", "Sumaste tu equipo a"] }[accion] || ["Vas a tomar", "Tomaste"];
+    this.diferir(`${inc}:${equipo}`, `${T[0]} ${inc}. Se confirma en 5 segundos.`, async salida => {
       const r = await this.api("POST", `/incidentes/${encodeURIComponent(inc)}/acciones`, { accion, equipo_id:equipo }, { keepalive:salida });
       if (salida) return;
       if (!r.cuerpo.ok) { this.aviso(r.cuerpo.error.mensaje, 4000); return this.redibujar(); }
       const eq = r.cuerpo.data.incidente?.equipos.find(x => x.id === equipo);
-      this.aviso(`Tomaste ${inc}${eq ? " por " + eq.nombre : ""}: se detiene el escalamiento`, 3000);
+      this.aviso(`${T[1]} ${inc}${eq ? " por " + eq.nombre : ""}${accion === "tomar" ? ": se detiene el escalamiento" : ""}`, 3000);
       this.pagina?.alCambiarInc?.(r.cuerpo.data);
     });
   },

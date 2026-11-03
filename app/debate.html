@@ -9,7 +9,7 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=30"></script>
+<script src="rbac-demo.js?v=31"></script>
 <script src="app.js"></script>
 <script>
 /* DEBATE — chat del incidente: mensajes, fotos, archivos, notas y fijados, con la info del INC a mano.
@@ -104,19 +104,17 @@ function resumenMensaje(m){
     </span></li>`;
 }
 
-// "Unirme al INC": quien llega al chat (convocado, mención, aviso) puede tomar el INC por su equipo sin salir del chat.
-// Es la misma acción que Tomar en Incidentes: el backend decide si se ofrece (acción "tomar" del equipo) y detiene el escalamiento.
+// "Unirme al INC": quien llega al chat puede tomar el INC, unirse a quien ya lo trabaja (varias personas) o sumar su equipo si no figura.
+// El backend decide qué se ofrece (acciones tomar / unirse / sumar_equipo); es la misma acción que en Incidentes.
 function bannerUnirse(d){
   const i = d.incidente;
   if (!i.abierto) return "";
-  const conTomar = (i.equipos || []).filter(e => (e.acciones || []).some(a => a.accion === "tomar"));
-  const eq = conTomar.find(e => e.estado === "pendiente") || conTomar[0];
-  if (!eq) return "";
-  const clave = `${i.inc}:${eq.id}`, pendiente = App.pendientes.has(clave);
-  const estado = eq.asignado ? `${eq.nombre}: lo tiene ${eq.asignado.nombre}` : eq.estado === "reconocido" ? `${eq.nombre}: reconocido, sin responsable` : `${eq.nombre}: nadie lo tomó todavía`;
-  return `<div class="unirse-inc"><span class="txt"><b>${esc(estado)}</b><small>${pendiente ? "Lo estás tomando: se confirma en 5 segundos." : "Unite al INC para trabajarlo: queda a tu nombre y se detiene el escalamiento."}</small></span>
-    ${pendiente ? `<button class="boton" data-accion="deshacer:${esc(i.inc)}:${esc(eq.id)}">Deshacer</button>`
-      : `<button class="boton primario" data-accion="inc:tomar:${esc(i.inc)}:${esc(eq.id)}">${icono("mano")}Unirme al INC · ${esc(eq.nombre)}</button>`}</div>`;
+  return C.sumarse(i).map(o => {
+    const pendiente = App.pendientes.has(`${i.inc}:${o.id}`);
+    return `<div class="unirse-inc"><span class="txt"><b>${esc(o.estado)}</b><small>${pendiente ? "Te estás sumando: se confirma en 5 segundos." : esc(o.aviso)}</small></span>
+    ${pendiente ? `<button class="boton" data-accion="deshacer:${esc(i.inc)}:${esc(o.id)}">Deshacer</button>`
+      : `<button class="boton primario" data-accion="inc:${o.accion}:${esc(i.inc)}:${esc(o.id)}">${icono("mano")}Unirme al INC · ${esc(o.nombre)}</button>`}</div>`;
+  }).join("");
 }
 
 // Descripción del INC: vista previa de 3 líneas; el texto completo se abre en una ventana flotante
