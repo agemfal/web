@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Ingresar · NOC</title>
+<link rel="stylesheet" href="estilos.css">
+<style>
+  .login{min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px 16px}
+  .login .card{width:100%; max-width:380px; margin:0}
+  .login .marca{display:flex; align-items:center; gap:10px; margin:0 0 18px}
+  .login .marca .ic{width:40px; height:40px; border-radius:12px; display:grid; place-items:center; background:var(--acento); color:#fff}
+  .login .marca .ic svg{width:22px; height:22px}
+  .login .marca b{font-size:20px; display:block}
+  .login .marca small{color:var(--suave); font-size:12px}
+  .login .marca .ic svg{fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
+  .login .campo > label span{font-size:12px; color:var(--suave); font-weight:500}
+  .login .fila-clave{display:flex; gap:8px}
+  .login .fila-clave input{flex:1; min-width:0}
+  .login .ver{width:auto; flex:none; min-height:44px; padding:0 12px; font-size:12px}
+  .login .nota a{color:var(--acento); text-decoration:underline}
+  .login .error{min-height:20px; margin:0 0 10px; color:var(--crit); font-size:14px}
+  .login .boton.primario{width:100%; min-height:44px; justify-content:center}
+  .login .nota{color:var(--suave); font-size:12px; margin:14px 0 0; line-height:1.5}
+  .login .reglas{margin:0 0 12px; padding-left:0; list-style:none; color:var(--suave); font-size:12px; line-height:1.6}
+  .login .reglas li.ok{color:var(--ok, #3fb950)}
+</style>
+</head>
+<body>
+<main class="login"><section class="card" id="caja" aria-live="polite"></section></main>
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* INGRESO — valida usuario y clave contra n8n (POST /auth/login).
+   La clave puede ser la propia del NOC o la de la empresa (directorio LDAP): lo decide n8n según el usuario.
+   Si la clave es temporal, pide cambiarla antes de entrar (POST /me/clave). */
+const ss = sessionStorage, params = new URLSearchParams(location.search);
+const DESTINO = "escritorio.html";
+const local = CONFIG.MODO_DATOS === "local";
+let estado = params.get("cambio") === "1" && ss.getItem("token") ? "cambio" : "ingreso";
+let claveIngresada = "", ocupado = false;
+
+async function pedir(metodo, ruta, body, token){
+  if (local) return SimuladorRBAC.atender({ metodo, ruta:"/api" + ruta, token, body });
+  try {
+    const res = await fetch(CONFIG.URL_API + ruta, { method:metodo,
+      headers:{ "Content-Type":"application/json", ...(token ? { Authorization:"Bearer " + token } : {}) }, body:JSON.stringify(body || {}) });
+    return { http:res.status, cuerpo: await res.json() };
+  } catch {
+    return { http:0, cuerpo:{ ok:false, error:{ codigo:"SIN_CONEXION", mensaje:"No se pudo contactar al servidor. Revisá la conexión o la VPN." } } };
+  }
+}
+
+function guardarSesion(d){
+  ["tokenRBAC", "usuarioDemo", "nombreLogin", "loginDemo", "permisos", "equipos"].forEach(k => ss.removeItem(k));
+  ss.setItem("token", d.token);
+  ss.setItem("usuario", d.usuario.username);
+  ss.setItem("nombre", d.usuario.nombre);
+  ss.setItem("rol", d.usuario.rol);
+  ss.setItem("origenClave", d.origen_clave);
+  if (local) { ss.setItem("tokenRBAC", d.token); ss.setItem("loginDemo", d.token); }   // la demo usa la sesión recién creada
+}
+
+const marca = sub => `<div class="marca"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONOS.candado}</svg></span><span><b>NOC</b><small>${esc(sub)}</small></span></div>`;
+const campoClave = (id, etiqueta, auto) => `<div class="campo"><label for="${id}"><span>${etiqueta}</span></label>
+  <div class="fila-clave"><input id="${id}" type="password" autocomplete="${auto}" required>
+  <button type="button" class="boton ver" data-ver="${id}" aria-controls="${id}">Mostrar</button></div></div>`;
+
+function dibujar(error = ""){
+  const caja = document.getElementById("caja");
+  if (estado === "ingreso") {
+    caja.innerHTML = `${marca("Centro de operaciones de red")}
+      <form id="fIngreso" novalidate>
+        <label class="campo"><span>Usuario o correo</span><input id="fUsuario" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(ss.getItem("usuario") || "")}"></label>
+        ${campoClave("fClave", "Clave", "current-password")}
+        <p class="error" id="fError" role="alert">${esc(error)}</p>
+        <button class="boton primario" type="submit" ${ocupado ? "disabled" : ""}>${ocupado ? "Ingresando…" : "Ingresar"}</button>
+      </form>
+      <p class="nota">Si tu cuenta usa el usuario de la empresa, ingresá con la misma clave de tu PC.
+        ¿Olvidaste la clave? Pedile al Administrador del NOC una clave temporal.</p>
+      ${local ? `<p class="nota"><b>Demo:</b> admin, ana, bruno o carla · clave <code>demo123</code>.</p>` : ""}`;
+    const u = document.getElementById("fUsuario");
+    (u.value ? document.getElementById("fClave") : u).focus();
+    document.getElementById("fIngreso").onsubmit = ev => { ev.preventDefault(); ingresar(); };
+  } else {
+    caja.innerHTML = `${marca("Tenés que cambiar tu clave")}
+      <form id="fCambio" novalidate>
+        ${claveIngresada ? "" : campoClave("fActual", "Clave actual", "current-password")}
+        ${campoClave("fNueva", "Clave nueva", "new-password")}
+        <ul class="reglas" id="fReglas"></ul>
+        ${campoClave("fRepetir", "Repetir clave nueva", "new-password")}
+        <p class="error" id="fError" role="alert">${esc(error)}</p>
+        <button class="boton primario" type="submit" ${ocupado ? "disabled" : ""}>${ocupado ? "Guardando…" : "Guardar y entrar"}</button>
+      </form>
+      <p class="nota">Tu clave es temporal o la reseteó el Administrador: elegí una nueva para continuar.
+        <a href="#" id="fOtro">Ingresar con otro usuario</a></p>`;
+    const nueva = document.getElementById("fNueva");
+    nueva.oninput = reglasClave; reglasClave();
+    (document.getElementById("fActual") || nueva).focus();
+    document.getElementById("fCambio").onsubmit = ev => { ev.preventDefault(); cambiar(); };
+    document.getElementById("fOtro").onclick = ev => { ev.preventDefault(); salir(); };
+  }
+  caja.querySelectorAll("[data-ver]").forEach(b => b.onclick = () => {
+    const i = document.getElementById(b.dataset.ver), ver = i.type === "password";
+    i.type = ver ? "text" : "password"; b.textContent = ver ? "Ocultar" : "Mostrar"; i.focus();
+  });
+}
+
+// Requisitos de la clave nueva (los valida también n8n: estos son solo una ayuda)
+function reglasClave(){
+  const v = document.getElementById("fNueva").value, u = (ss.getItem("usuario") || "").toLowerCase();
+  const reglas = [[v.length >= 12, "Al menos 12 caracteres"], [/[A-Z]/.test(v), "Una mayúscula"], [/[a-z]/.test(v), "Una minúscula"],
+    [/\d/.test(v), "Un número"], [!(u.length >= 3 && v.toLowerCase().includes(u)), "Sin tu usuario"]];
+  document.getElementById("fReglas").innerHTML = reglas.map(([ok, t]) => `<li class="${ok && v ? "ok" : ""}">${ok && v ? "✓ " : ""}${t}</li>`).join("");
+}
+
+async function ingresar(){
+  const usuario = document.getElementById("fUsuario").value.trim(), clave = document.getElementById("fClave").value;
+  if (!usuario || !clave) return dibujar("Ingresá usuario y clave");
+  ss.setItem("usuario", usuario);
+  ocupado = true; dibujar();
+  const r = await pedir("POST", "/auth/login", { usuario, clave });
+  ocupado = false;
+  if (!r.cuerpo?.ok) return dibujar(r.cuerpo?.error?.mensaje || "No se pudo ingresar");
+  guardarSesion(r.cuerpo.data);
+  if (r.cuerpo.data.debe_cambiar_clave) { claveIngresada = clave; estado = "cambio"; return dibujar(); }
+  entrar();
+}
+
+async function cambiar(){
+  const actual = claveIngresada || document.getElementById("fActual").value;
+  const nueva = document.getElementById("fNueva").value, repetir = document.getElementById("fRepetir").value;
+  if (!actual || !nueva) return dibujar("Completá las claves");
+  if (nueva !== repetir) return dibujar("Las claves nuevas no coinciden");
+  ocupado = true; dibujar();
+  const r = await pedir("POST", "/me/clave", { actual, nueva }, ss.getItem("token"));
+  ocupado = false;
+  if (!r.cuerpo?.ok) {
+    if (r.http === 401) { estado = "ingreso"; claveIngresada = ""; return dibujar("La sesión venció: volvé a ingresar"); }
+    return dibujar(r.cuerpo?.error?.mensaje || "No se pudo cambiar la clave");
+  }
+  claveIngresada = "";
+  entrar();
+}
+
+function entrar(){ location.replace(params.get("volver") && /^[a-z-]+\.html/.test(params.get("volver")) ? params.get("volver") : DESTINO); }
+async function salir(){
+  const t = ss.getItem("token");
+  if (t) await pedir("POST", "/auth/logout", {}, t);
+  ss.clear(); estado = "ingreso"; claveIngresada = ""; dibujar();
+}
+
+// Ya hay sesión válida → directo a la app
+(async () => {
+  if (estado === "ingreso" && ss.getItem("token") && ss.getItem("origenClave")) {
+    const r = local ? SimuladorRBAC.atender({ metodo:"GET", ruta:"/api/me", token:ss.getItem("token") })
+                    : await fetch(CONFIG.URL_API + "/me", { headers:{ Authorization:"Bearer " + ss.getItem("token") } })
+                        .then(async x => ({ http:x.status, cuerpo:await x.json() })).catch(() => ({ http:0 }));
+    if (r.http === 200) return entrar();
+    if (r.cuerpo?.error?.codigo === "CAMBIO_CLAVE_REQUERIDO") estado = "cambio";
+  }
+  dibujar();
+})();
+</script>
+</body>
+</html>

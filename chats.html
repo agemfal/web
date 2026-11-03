@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Chats</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* CHATS — todos los INC como lista de chats (estilo WhatsApp): último mensaje, hora y no leídos.
+   Tocar un chat entra al debate del INC; si todavía no tiene, se abre en ese momento. */
+let datos = null, error = null, filtro = "todos", busqueda = "", verArchivados = false;
+
+async function recargar(){
+  const r = await App.api("GET", "/debates");
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  const nuevo = r.cuerpo.ok ? r.cuerpo.data : null;
+  if (JSON.stringify(nuevo) === JSON.stringify(datos)) return;
+  datos = nuevo; App.redibujar();
+}
+
+// Hora estilo WhatsApp: hoy → 14:05 · ayer → Ayer · esta semana → lun · antes → 28/10
+function horaChat(iso){
+  if (!iso) return "";
+  const f = new Date(iso), hoy = new Date(), dias = Math.floor((new Date(hoy.toDateString()) - new Date(f.toDateString())) / 864e5);
+  if (dias <= 0) return f.toLocaleTimeString("es-AR", { hour:"2-digit", minute:"2-digit" });
+  if (dias === 1) return "Ayer";
+  if (dias < 7) return f.toLocaleDateString("es-AR", { weekday:"short" }).replace(".", "");
+  return f.toLocaleDateString("es-AR", { day:"2-digit", month:"2-digit" });
+}
+
+// Un chat por INC abierto (con o sin debate) y uno por debate de INC ya cerrado
+function chats(){
+  const abiertos = datos.incidentes.map(i => ({ inc:i.inc, titulo:i.titulo, prioridad:i.prioridad, servicios:i.servicios, equipos:i.equipos, mio:i.mio,
+    debate:i.debate, puede_abrir:i.puede_abrir, archivado:false,
+    fecha: i.debate?.ultimo?.en || i.debate?.abierto_en || i.inicio,
+    tomado: i.equipos.length && i.equipos.every(e => e.estado !== "pendiente") }));
+  const cerrados = datos.otros_debates.map(d => ({ inc:d.inc, titulo:d.titulo, prioridad:d.prioridad, servicios:[], equipos:d.equipos, mio:false,
+    debate:d, puede_abrir:false, archivado:true, fecha:d.ultimo?.en || d.abierto_en }));
+  return [...abiertos, ...cerrados].sort((a, b) => Number(!!b.debate) - Number(!!a.debate) || String(b.fecha).localeCompare(String(a.fecha)) || a.prioridad - b.prioridad);
+}
+const PASA = {
+  todos: () => true,
+  noleidos: c => c.debate?.no_leidos > 0,
+  mios: c => c.mio || c.debate?.soy_participante,
+  criticos: c => c.prioridad != null && sevInc(c.prioridad) === "crit",
+  sintomar: c => !c.archivado && !c.tomado
+};
+
+function filaChat(c){
+  const d = c.debate, crit = c.prioridad != null && sevInc(c.prioridad) === "crit";
+  const sub = d?.ultimo ? `<b>${esc(d.ultimo.autor || "")}:</b> ${esc(d.ultimo.texto)}`
+    : d ? `<i>Chat abierto por ${esc(d.abierto_por?.nombre || "—")} · sin mensajes</i>`
+    : c.puede_abrir ? `<i>Sin chat todavía · tocá para abrirlo</i>` : `<i>Sin chat todavía</i>`;
+  const estado = c.archivado ? "" : c.tomado ? `<span class="chat-tag ok">${icono("mano")}tomado</span>` : `<span class="chat-tag warn">${icono("reloj")}sin tomar</span>`;
+  return `<li class="chat-fila ${d?.no_leidos ? "nuevo" : ""}" data-accion="ch:${d ? "ver:" + esc(d.id) : "abrir:" + esc(c.inc)}">
+    <span class="chat-avatar ${crit ? "crit" : "warn"}">P${c.prioridad ?? "?"}</span>
+    <span class="chat-cuerpo">
+      <span class="chat-l1"><b>${esc(c.titulo)}</b><small>${esc(horaChat(c.fecha))}</small></span>
+      <span class="chat-l2"><span class="chat-prev">${sub}</span>${d?.no_leidos ? `<span class="chat-num">${d.no_leidos}</span>` : ""}</span>
+      <span class="chat-l3">${c.prioridad != null ? `<b class="chat-cat ${crit ? "crit" : "warn"}">${esc(nombreInc(c.prioridad))}</b> · ` : ""}${esc(c.inc)}${c.equipos.length ? " · " + esc(c.equipos.map(e => e.nombre).join(", ")) : ""}${d ? ` · ${d.participantes_total} en el chat` : ""} ${estado}</span>
+    </span></li>`;
+}
+
+App.iniciar({
+  id: "chats",
+  titulo: "Chats",
+  render: () => {
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando chats…", "reloj") });
+    const todos = chats(), q = busqueda.trim().toLowerCase();
+    const busca = c => !q || [c.inc, c.titulo, c.debate?.ultimo?.texto, ...c.servicios, ...c.equipos.map(e => e.nombre)].some(x => String(x || "").toLowerCase().includes(q));
+    const activos = todos.filter(c => !c.archivado && PASA[filtro](c) && busca(c));
+    const archivados = todos.filter(c => c.archivado && busca(c));
+    const opciones = [["todos", "Todos"], ["noleidos", "No leídos"], ["mios", "Míos"], ["sintomar", "Sin tomar"], ["criticos", "Críticos"]];
+    return `
+      <label class="buscador-chat">${icono("buscar")}<input id="fBuscar" type="search" placeholder="Buscar INC, título, equipo o mensaje" value="${esc(busqueda)}" autocomplete="off"></label>
+      <div class="filtros">${opciones.map(([id, t]) => { const n = todos.filter(c => !c.archivado && PASA[id](c)).length;
+        return `<button data-accion="ch:f:${id}" class="${filtro === id ? "activo" : ""}">${t}${id === "noleidos" && n ? ` <span class="num">${n}</span>` : ""}</button>`; }).join("")}</div>
+      <ul class="chats">
+        ${archivados.length ? `<li class="chat-fila archivo" data-accion="ch:archivo"><span class="chat-avatar gris">${icono("archivo")}</span>
+          <span class="chat-cuerpo"><span class="chat-l1"><b>Archivados</b><small>${archivados.length}</small></span>
+          <span class="chat-l2"><span class="chat-prev">Chats de INC ya cerrados · tocá para ${verArchivados ? "ocultarlos" : "verlos"}</span></span></span></li>` : ""}
+        ${verArchivados ? archivados.map(filaChat).join("") : ""}
+        ${activos.map(filaChat).join("") || `<li class="chat-vacio">${q ? "Ningún chat coincide con la búsqueda" : "No hay chats en este filtro"}</li>`}
+      </ul>`;
+  },
+  alMontar: () => {
+    if (!datos && !error) recargar();
+    const b = document.getElementById("fBuscar");
+    if (b) b.oninput = () => { busqueda = b.value; const pos = b.selectionStart; App.redibujar(); const n = document.getElementById("fBuscar"); n.focus(); n.setSelectionRange(pos, pos); };
+  },
+  accion: id => {
+    const [p, a, x] = id.split(":");
+    if (p !== "ch") return;
+    if (a === "f") { filtro = x; App.redibujar(); }
+    if (a === "archivo") { verArchivados = !verArchivados; App.redibujar(); }
+    if (a === "ver") location.href = "debate.html?id=" + encodeURIComponent(x);
+    if (a === "abrir") App.abrirInc(x, false);
+    return true;
+  }
+});
+setInterval(() => { if (!document.hidden && document.activeElement?.id !== "fBuscar") recargar(); }, 4000);
+</script>
+</body>
+</html>

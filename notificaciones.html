@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Notificaciones</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* NOTIFICACIONES — menciones, convocatorias y avisos; cada una lleva a donde corresponde */
+let datos = null, error = null, filtro = "todas";
+const TIPO = {
+  mencion:      { ic:"mensaje", txt:"Mención",      clase:"crit" },
+  convocatoria: { ic:"equipo",  txt:"Convocatoria", clase:"warn" },
+  convocatoria_general: { ic:"alerta", txt:"Convocatoria general", clase:"crit" },
+  debate:       { ic:"mensaje", txt:"Chat del INC", clase:"info" },
+  escalamiento: { ic:"subir",   txt:"Escalamiento", clase:"crit" },
+  sla:          { ic:"reloj",   txt:"SLA",          clase:"crit" },
+  inc_cambio:   { ic:"cambiar", txt:"Cambio de categoría", clase:"warn" },
+  general:      { ic:"campana", txt:"Aviso",        clase:"info" }
+};
+
+async function recargar(){
+  const r = await App.api("GET", "/notificaciones?limite=100");
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  const nuevo = r.cuerpo.ok ? r.cuerpo.data : null;
+  if (JSON.stringify(nuevo) === JSON.stringify(datos)) return;
+  datos = nuevo; App.redibujar();
+}
+
+function liNotificacion(n){
+  const t = TIPO[n.tipo] || TIPO.general;
+  return `<li class="${n.leida ? "" : t.clase} alto clic" data-accion="n:abrir:${esc(n.id)}" style="${n.leida ? "opacity:.6" : ""}">
+    <span class="ic" style="${n.leida ? "background:var(--panel2);color:var(--tenue)" : ""}">${icono(n.silenciosa ? "silencio" : t.ic)}</span>
+    <span class="cuerpo"><b style="white-space:normal">${esc(n.titulo)}</b>
+      ${n.cuerpo ? `<span class="cambio" style="color:var(--suave)">${esc(n.cuerpo)}</span>` : ""}
+      <small>${esc(t.txt)}${n.silenciosa ? " · en silencio (fuera de tu horario)" : ""}${n.con_llamada ? " · también te llamaron" : ""} · ${hace(n.fecha)}${n.equipo ? " · " + esc(n.equipo) : ""}</small>
+      ${n.puede_tomar ? `<span class="btns" style="margin-top:6px">${App.pendientes.has(`${n.inc}:${n.team_id}`)
+        ? `<button class="boton chico" data-accion="deshacer:${esc(n.inc)}:${esc(n.team_id)}">Tomando · Deshacer</button>`
+        : `<button class="boton chico primario" data-accion="inc:tomar:${esc(n.inc)}:${esc(n.team_id)}">${icono("mano")}Tomar ${esc(n.inc)}${n.equipo ? " · " + esc(n.equipo) : ""}</button>`}</span>` : ""}</span>
+    ${n.leida ? "" : `<span class="pastilla" style="background:var(--acento)">nueva</span>`}
+  </li>`;
+}
+
+async function abrir(id){
+  const n = datos.notificaciones.find(x => x.id === id);
+  if (!n.leida) await App.api("POST", "/notificaciones/leer", { ids:[id] });
+  if (n.enlace) location.href = n.enlace;
+  else { await recargar(); App.revisarNotificaciones(); }
+}
+
+App.iniciar({
+  id: "notificaciones",
+  titulo: "Notificaciones",
+  render: () => {
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando…", "reloj") });
+    const opciones = [["todas", "Todas"], ["nuevas", "Sin leer"], ["mencion", "Menciones"], ["escalamiento", "Escalamientos"], ["convocatoria", "Convocatorias"]];
+    const pasa = { todas:() => true, nuevas:n => !n.leida, mencion:n => n.tipo === "mencion", escalamiento:n => n.tipo === "escalamiento", convocatoria:n => n.tipo === "convocatoria" || n.tipo === "convocatoria_general" };
+    const vis = datos.notificaciones.filter(pasa[filtro]);
+    return `
+      <div class="filtros">${opciones.map(([id, txt]) =>
+        `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}">${txt} <span class="num">${datos.notificaciones.filter(pasa[id]).length}</span></button>`).join("")}</div>
+      ${datos.no_leidas ? `<button class="boton" data-accion="n:todas">${icono("check")} Marcar todas como leídas (${datos.no_leidas})</button>` : ""}
+      ${C.tarjeta({ titulo:"Notificaciones", iconoTit:"campana",
+        cuerpo: vis.length ? `<ul class="lista">${vis.map(liNotificacion).join("")}</ul>` : C.vacio(filtro === "todas" ? "No tenés notificaciones" : "Nada por acá") })}`;
+  },
+  alMontar: () => { if (!datos && !error) recargar(); },
+  alNotificar: () => recargar(),
+  alCambiarInc: () => recargar(),
+  accion: id => {
+    if (id.startsWith("f:")) { filtro = id.slice(2); App.redibujar(); return true; }
+    if (id === "n:todas") { App.api("POST", "/notificaciones/leer", {}).then(() => { recargar(); App.revisarNotificaciones(); }); return true; }
+    if (id.startsWith("n:abrir:")) { abrir(id.slice(8)); return true; }
+  }
+});
+</script>
+</body>
+</html>
