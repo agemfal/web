@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Usuarios</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<!-- Demo Local: backend simulado del módulo (en producción responde n8n con el mismo JSON) -->
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* USUARIOS — alta, solicitudes, rol, equipos y estado.
+   La pantalla solo dibuja: qué se puede hacer lo dice el backend en "acciones". */
+let lista = null, solicitudes = [], equipos = [], detalle = null, filtro = "activo", error = null, cargando = false;
+const CLASE = { activo:"ok", inactivo:"warn", baja:"crit" };
+
+async function recargar(){
+  if (cargando) return;
+  cargando = true;
+  const [u, s, e] = await Promise.all([App.api("GET", "/usuarios"), App.api("GET", "/solicitudes?estado=pendiente"), App.api("GET", "/equipos")]);
+  error = u.cuerpo.ok ? null : u.cuerpo.error.mensaje;
+  lista = u.cuerpo.ok ? u.cuerpo.data : null;
+  solicitudes = s.cuerpo.ok ? s.cuerpo.data.solicitudes : [];
+  equipos = e.cuerpo.ok ? e.cuerpo.data.equipos : [];
+  if (detalle) { const d = await App.api("GET", "/usuarios/" + detalle.id); detalle = d.cuerpo.ok ? d.cuerpo.data.usuario : null; }
+  cargando = false;
+  App.redibujar();
+}
+async function ver(id){
+  const d = await App.api("GET", "/usuarios/" + id);
+  if (!d.cuerpo.ok) return App.aviso(d.cuerpo.error.mensaje);
+  detalle = d.cuerpo.data.usuario; App.redibujar(); scrollTo({ top:0, behavior:"smooth" });
+}
+
+const opcionesRol = (soloBasicos = false) => Object.entries(ROLES_TXT)
+  .filter(([c]) => !soloBasicos || ["OPERADOR", "LECTURA"].includes(c)).map(([valor, texto]) => ({ valor, texto }));
+const opcionesEquipos = () => equipos.filter(e => e.estado === "activo").map(e => ({ valor:e.id, texto:`${e.nombre} (${e.codigo})` }));
+const equiposTxt = u => u.equipos.length ? u.equipos.map(e => e.nombre + (e.es_responsable ? " ★" : "")).join(", ") : "sin equipos";
+
+function liUsuario(u){
+  return `<li class="${CLASE[u.estado]} clic" data-accion="u:ver:${esc(u.id)}">
+    <span class="ic">${icono("usuario")}</span>
+    <span class="cuerpo"><b>${esc(u.nombre)}</b><small>${esc(u.rol.nombre)} · ${esc(equiposTxt(u))}</small></span>
+    ${C.chip(CLASE[u.estado], u.estado_txt)}
+  </li>`;
+}
+function liSolicitud(s){
+  return `<li class="info alto">
+    <span class="ic">${icono("reloj")}</span>
+    <span class="cuerpo"><b>${esc(s.nombre)} · ${esc(s.rol.nombre)}</b>
+      <small>${esc(s.email)} · ${esc(s.equipos.map(e => e.nombre).join(", "))}</small>
+      <span class="cambio">Pedido por ${esc(s.solicitado_por?.nombre || "—")}: “${esc(s.justificacion)}”</span>
+      ${s.acciones.length ? `<span class="btns">${s.acciones.map(a =>
+        `<button class="boton chico ${a.accion === "rechazar" ? "peligro" : "primario"}" data-accion="s:${a.accion}:${esc(s.id)}">${esc(a.etiqueta)}</button>`).join("")}</span>`
+        : `<span class="cambio">Esperando aprobación de un Administrador</span>`}
+    </span>
+  </li>`;
+}
+function fichaUsuario(u){
+  const fila = (k, v) => `<dt>${esc(k)}</dt><dd>${v}</dd>`;
+  return C.tarjeta({ cuerpo: `
+    <div class="cab-ficha"><span class="ic">${icono("usuario")}</span><b>${esc(u.nombre)}</b>${C.chip(CLASE[u.estado], u.estado_txt)}</div>
+    <dl class="ficha">
+      ${fila("Usuario", esc(u.username))}${fila("Correo", esc(u.email))}${fila("Rol", esc(u.rol.nombre))}
+      ${fila("Equipos", u.equipos.length ? `<span class="etiquetas">${u.equipos.map(e => C.chip(e.es_responsable ? "ok" : "info", e.nombre + (e.es_responsable ? " · responsable" : ""))).join("")}</span>` : "—")}
+      ${u.telefono ? fila("Teléfono", esc(u.telefono)) : ""}
+      ${u.debe_cambiar_clave ? fila("Clave", "Debe cambiarla en el próximo ingreso") : ""}
+      ${u.motivo_estado ? fila("Último motivo", esc(u.motivo_estado)) : ""}
+      ${fila("Actualizado", `${u.actualizado.en ? hace(u.actualizado.en) : "—"}${u.actualizado.por ? " por " + esc(u.actualizado.por.nombre) : ""}`)}
+    </dl>
+    <div class="btns">${u.acciones.map(a =>
+      `<button class="boton chico ${["dar_baja", "desactivar"].includes(a.accion) ? "peligro" : ""}" data-accion="u:act:${a.accion}">${esc(a.etiqueta)}</button>`).join("")}
+      <button class="boton chico" data-accion="u:cerrar">Cerrar</button></div>` });
+}
+
+/* ---------- Acciones (los formularios juntan datos; las reglas las aplica el backend) ---------- */
+async function accionUsuario(accion){
+  const u = detalle, base = "/usuarios/" + u.id;
+  let f, ok = null;
+  if (accion === "modificar") {
+    f = await App.formulario({ titulo:`Editar ${u.nombre}`, campos:[
+      { id:"nombre", etiqueta:"Nombre", valor:u.nombre, requerido:true },
+      { id:"email", etiqueta:"Correo", tipo:"email", valor:u.email, requerido:true },
+      { id:"telefono", etiqueta:"Teléfono", valor:u.telefono || "" } ] });
+    if (f) ok = await App.enviar("PATCH", base, { ...f, version:u.version }, "Datos actualizados");
+  }
+  if (accion === "cambiar_rol") {
+    f = await App.formulario({ titulo:`Cambiar rol de ${u.nombre}`, campos:[
+      { id:"rol", etiqueta:"Nuevo rol", tipo:"select", opciones:opcionesRol(), valor:u.rol.codigo }, JUSTIFICACION ], enviar:"Cambiar rol" });
+    if (f) ok = await App.enviar("POST", base + "/rol", f, "Rol actualizado");
+  }
+  if (accion === "cambiar_equipos") {
+    f = await App.formulario({ titulo:`Equipos de ${u.nombre}`, campos:[
+      { id:"equipos", etiqueta:"Equipos", tipo:"multi", opciones:opcionesEquipos(), valor:u.equipos.map(e => e.id) }, JUSTIFICACION ] });
+    if (f) ok = await App.enviar("PUT", base + "/equipos", f, "Equipos actualizados");
+  }
+  if (["desactivar", "activar", "dar_baja"].includes(accion)) {
+    const estado = { desactivar:"inactivo", activar:"activo", dar_baja:"baja" }[accion];
+    f = await App.formulario({ titulo:`${{ desactivar:"Desactivar", activar:"Activar", dar_baja:"Dar de baja" }[accion]} a ${u.nombre}`,
+      campos:[ ...(accion === "dar_baja" ? [{ tipo:"nota", texto:"La baja es definitiva: cierra sus equipos y revoca sus sesiones. El correo y el usuario quedan reservados." }] : []), JUSTIFICACION ],
+      enviar:"Confirmar", peligro:accion !== "activar" });
+    if (!f) return;
+    let r = await App.api("POST", base + "/estado", { estado, justificacion:f.justificacion });
+    // Si es responsable de equipos, el backend pide reemplazos: se eligen y se reintenta
+    if (!r.cuerpo.ok && r.cuerpo.error.codigo === "RESPONSABLE_SIN_REEMPLAZO") {
+      const candidatos = lista.usuarios.filter(x => x.id !== u.id && x.estado === "activo" && ["ADMIN", "GESTOR"].includes(x.rol.codigo))
+        .map(x => ({ valor:x.id, texto:`${x.nombre} (${x.rol.nombre})` }));
+      const eqs = r.cuerpo.error.detalle.equipos;
+      const g = await App.formulario({ titulo:"Nuevo responsable", enviar:"Confirmar", peligro:true, campos:[
+        { tipo:"nota", texto:`${u.nombre} es responsable de ${eqs.map(e => e.nombre).join(", ")}. Elegí quién lo reemplaza.` },
+        ...eqs.map(e => ({ id:e.id, etiqueta:e.nombre, tipo:"select", opciones:candidatos })) ] });
+      if (!g) return;
+      ok = await App.enviar("POST", base + "/estado", { estado, justificacion:f.justificacion, reemplazos:eqs.map(e => ({ team_id:e.id, user_id:g[e.id] })) }, "Estado actualizado");
+    } else if (r.cuerpo.ok) { App.aviso("Estado actualizado"); ok = r.cuerpo.data; }
+    else App.aviso(r.cuerpo.error.mensaje, 4500);
+  }
+  if (accion === "resetear_clave") {
+    f = await App.formulario({ titulo:`Resetear clave de ${u.nombre}`, enviar:"Generar clave temporal",
+      campos:[{ tipo:"nota", texto:"Se envía una clave temporal por correo y se cierran sus sesiones abiertas." }] });
+    if (f) ok = await App.enviar("POST", base + "/clave/reset", {}, "Clave temporal enviada");
+  }
+  if (ok) recargar();
+}
+
+async function alta(solicitud){
+  const f = await App.formulario({ titulo: solicitud ? "Solicitar alta de usuario" : "Nuevo usuario", enviar: solicitud ? "Enviar solicitud" : "Crear usuario", campos:[
+    { id:"nombre", etiqueta:"Nombre y apellido", requerido:true },
+    { id:"email", etiqueta:"Correo", tipo:"email", requerido:true },
+    { id:"username", etiqueta:"Usuario (opcional)", ayuda:"Si lo dejás vacío se usa la parte del correo antes de @" },
+    { id:"rol", etiqueta:"Rol", tipo:"select", opciones:opcionesRol(solicitud), valor:"OPERADOR" },
+    { id:"equipos", etiqueta:"Equipos", tipo:"multi", opciones:solicitud ? equipos.filter(e => e.es_responsable).map(e => ({ valor:e.id, texto:e.nombre })) : opcionesEquipos() },
+    ...(solicitud ? [{ tipo:"nota", texto:"Un Administrador tiene que aprobar la solicitud." }] : [{ tipo:"nota", texto:"Se envía una clave temporal por correo." }]),
+    JUSTIFICACION ] });
+  if (!f) return;
+  const ok = await App.enviar("POST", solicitud ? "/solicitudes" : "/usuarios", f, solicitud ? "Solicitud enviada" : "Usuario creado");
+  if (ok) { if (ok.usuario) detalle = ok.usuario; recargar(); }
+}
+
+async function resolver(decision, id){
+  const s = solicitudes.find(x => x.id === id);
+  const f = await App.formulario({ titulo:`${decision === "aprobar" ? "Aprobar" : "Rechazar"} a ${s.nombre}`, enviar: decision === "aprobar" ? "Aprobar y crear usuario" : "Rechazar",
+    peligro: decision === "rechazar", campos:[{ id:"motivo", etiqueta:"Motivo (queda en la auditoría)", tipo:"textarea", requerido:true, min:10 }] });
+  if (!f) return;
+  const ok = await App.enviar("POST", `/solicitudes/${id}/resolver`, { decision, motivo:f.motivo }, decision === "aprobar" ? "Usuario creado" : "Solicitud rechazada");
+  if (ok) { if (ok.usuario) detalle = ok.usuario; recargar(); }
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Usuarios",
+  render: () => {
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!lista) return C.tarjeta({ cuerpo: C.vacio("Cargando usuarios…", "reloj") });
+    const cuenta = e => lista.usuarios.filter(u => e === "todos" || u.estado === e).length;
+    const opciones = [["activo", "Activos"], ["inactivo", "Inactivos"], ["baja", "Baja"], ["todos", "Todos"]];
+    const vis = lista.usuarios.filter(u => filtro === "todos" || u.estado === filtro);
+    const alta = lista.puede_crear ? `<button class="boton primario" data-accion="u:nuevo">${icono("mas")} Nuevo usuario</button>`
+               : lista.puede_solicitar ? `<button class="boton" data-accion="u:solicitar">${icono("mas")} Solicitar alta de usuario</button>` : "";
+    return `
+      ${detalle ? fichaUsuario(detalle) : ""}
+      ${solicitudes.length ? C.tarjeta({ titulo:`Solicitudes pendientes (${solicitudes.length})`, iconoTit:"reloj", cuerpo:`<ul class="lista">${solicitudes.map(liSolicitud).join("")}</ul>` }) : ""}
+      ${alta}
+      <div class="filtros">${opciones.map(([id, txt]) =>
+        `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}">${txt} <span class="num">${cuenta(id)}</span></button>`).join("")}</div>
+      ${C.tarjeta({ titulo:`Usuarios`, iconoTit:"usuario", cuerpo: vis.length ? `<ul class="lista">${vis.map(liUsuario).join("")}</ul>` : C.vacio("Ningún usuario en este estado") })}`;
+  },
+  alMontar: () => { if (!lista && !error) recargar(); },
+  accion: id => {
+    const [p, a, x] = id.split(":");
+    if (p === "f") { filtro = a; App.redibujar(); return true; }
+    if (p === "u" && a === "ver") { ver(x); return true; }
+    if (p === "u" && a === "cerrar") { detalle = null; App.redibujar(); return true; }
+    if (p === "u" && a === "act") { accionUsuario(x); return true; }
+    if (p === "u" && a === "nuevo") { alta(false); return true; }
+    if (p === "u" && a === "solicitar") { alta(true); return true; }
+    if (p === "s") { resolver(a, x); return true; }
+  }
+});
+</script>
+</body>
+</html>

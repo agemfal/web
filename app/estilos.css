@@ -1,0 +1,650 @@
+/* =====================================================================
+   ESTILOS COMPARTIDOS — todas las páginas de la app
+   Estilo: pizarra / grafito, sobrio y empresarial.
+   Mobile first: lo base es para celular; los @media al final adaptan
+   a tablet y escritorio.
+   ===================================================================== */
+
+/* ===== 1. Tokens de diseño (cambiá acá y cambia toda la app) ===== */
+:root{
+  /* Superficies */
+  --bg:#0d1117;        /* fondo de página */
+  --panel:#161b22;     /* tarjetas */
+  --panel2:#1c2128;    /* elementos internos / hover */
+  --linea:#30363d;     /* bordes de 1px */
+  --linea-suave:#21262d;
+
+  /* Texto */
+  --texto:#e6edf3;     /* blanco roto */
+  --suave:#8b949e;
+  --tenue:#6e7681;
+
+  /* Estados: color sólido solo para texto, íconos y línea lateral */
+  --ok:#3fb950;   --ok-bg:rgba(46,160,67,.12);
+  --warn:#d29922; --warn-bg:rgba(187,128,9,.13);
+  --crit:#f85149; --crit-bg:rgba(248,81,73,.11);
+  --info:#58a6ff; --info-bg:rgba(56,139,253,.12);
+  --acento:#2f81f7;
+
+  /* Forma */
+  --radio:10px; --radio-sm:8px; --radio-xs:6px;
+  --gap:12px; --nav:64px;
+
+  /* Sombras corporativas, cortas y hacia abajo */
+  --sombra:0 1px 0 rgba(1,4,9,.4), 0 8px 24px -12px rgba(1,4,9,.6);
+  --sombra-sm:0 1px 0 rgba(1,4,9,.3), 0 1px 3px rgba(1,4,9,.35);
+
+  /* Movimiento */
+  --curva:cubic-bezier(0.16, 1, 0.3, 1);
+  --rapido:.18s; --medio:.32s; --lento:.7s;
+}
+
+/* ===== 2. Base ===== */
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+html,body{margin:0; background:var(--bg); color:var(--texto)}
+body{
+  font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  font-size:14px; line-height:1.45; letter-spacing:-.005em;
+  padding-bottom:calc(var(--nav) + 24px + env(safe-area-inset-bottom));
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+}
+a{color:inherit; text-decoration:none}
+button{font:inherit; color:inherit; background:none; border:0; cursor:pointer}
+svg.i{width:18px; height:18px; flex:none; fill:none; stroke:currentColor; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums; letter-spacing:-.01em}
+:focus-visible{outline:2px solid var(--acento); outline-offset:2px; border-radius:var(--radio-xs)}
+
+/* Colores de estado: cualquier elemento con .ok/.warn/.crit/.info hereda --c y --bg-c */
+.ok{--c:var(--ok); --bg-c:var(--ok-bg)}
+.warn{--c:var(--warn); --bg-c:var(--warn-bg)}
+.crit{--c:var(--crit); --bg-c:var(--crit-bg)}
+.info{--c:var(--info); --bg-c:var(--info-bg)}
+
+/* ===== 3. Encabezado compacto ===== */
+.top{
+  position:sticky; top:0; z-index:20;
+  background:rgba(13,17,23,.85); backdrop-filter:saturate(160%) blur(12px); -webkit-backdrop-filter:saturate(160%) blur(12px);
+  padding:calc(10px + env(safe-area-inset-top)) 16px 10px; display:flex; align-items:center; gap:12px;
+  border-bottom:1px solid var(--linea-suave);
+}
+.top .titulo{flex:1; min-width:0}
+.top .titulo b{display:block; font-size:16px; font-weight:600; letter-spacing:-.015em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.top .titulo small{color:var(--suave); font-size:12px; display:flex; align-items:center; gap:6px; margin-top:1px}
+.vivo{width:6px; height:6px; border-radius:50%; background:var(--ok); animation:titila 2.4s var(--curva) infinite}
+@keyframes titila{50%{opacity:.35}}
+.btn-icono{
+  width:40px; height:40px; border-radius:var(--radio-sm); display:grid; place-items:center; flex:none;
+  background:var(--panel); border:1px solid var(--linea); color:var(--suave); position:relative;
+  box-shadow:var(--sombra-sm); transition:background var(--rapido) var(--curva), color var(--rapido) var(--curva), transform var(--rapido) var(--curva);
+}
+.btn-icono:hover{background:var(--panel2); color:var(--texto)}
+.btn-icono:active{transform:scale(.96)}
+.badge{
+  position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 5px; border-radius:9px;
+  background:var(--crit); color:#fff; font-size:12px; font-weight:600; display:grid; place-items:center;
+  border:2px solid var(--bg);
+}
+.badge[hidden]{display:none}
+/* Barra fina que marca el próximo refresco */
+.progreso{position:absolute; left:0; bottom:-1px; height:1px; width:100%; background:var(--acento); opacity:.7; transform-origin:left}
+.progreso.corre{animation:vaciar var(--seg,10s) linear forwards}
+@keyframes vaciar{from{transform:scaleX(1)} to{transform:scaleX(0)}}
+
+/* ===== 4. Contenedor ===== */
+main{padding:16px; display:grid; grid-template-columns:minmax(0,1fr); gap:var(--gap); max-width:1200px; margin:0 auto}
+main > *{min-width:0}
+.dos-col{display:grid; grid-template-columns:minmax(0,1fr); gap:var(--gap)}
+.dos-col > *{min-width:0}
+
+/* ===== 5. Tarjeta base ===== */
+.card{
+  background:var(--panel); border:1px solid var(--linea); border-radius:var(--radio); padding:14px 16px;
+  box-shadow:var(--sombra-sm);
+}
+body:not(.listo) .card,
+body:not(.listo) .serv,
+body:not(.listo) .fila-serv{animation:entrar var(--medio) var(--curva) both}
+body:not(.listo) .fila-serv:nth-child(3){animation-delay:.03s}
+body:not(.listo) .fila-serv:nth-child(4){animation-delay:.06s}
+@keyframes entrar{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
+.card h2{
+  margin:0 0 12px; font-size:12px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--suave);
+  display:flex; align-items:center; gap:8px;
+}
+.card h2 svg.i{width:15px; height:15px; color:var(--tenue)}
+
+/* ===== 6. Estado de salud (hero) ===== */
+.salud{
+  display:flex; align-items:center; gap:16px; padding:16px; position:relative; overflow:hidden;
+  background:var(--panel); border-color:var(--linea);
+}
+.salud::before{content:""; position:absolute; inset:0; background:var(--bg-c); opacity:.6; pointer-events:none}
+.salud::after{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--c)}
+.salud > *{position:relative}
+.anillo{width:72px; height:72px; flex:none; position:relative}
+.anillo svg{width:72px; height:72px; transform:rotate(-90deg)}
+.anillo circle{fill:none; stroke-width:6}
+.anillo .fondo{stroke:var(--linea)}
+.anillo .valor{stroke:var(--c); stroke-linecap:round; transition:stroke-dashoffset var(--lento) var(--curva)}
+.anillo span{position:absolute; inset:0; display:grid; place-items:center; align-content:center; text-align:center; font-weight:600; font-size:18px; line-height:1; letter-spacing:-.02em}
+.anillo span small{display:block; font-size:12px; color:var(--suave); font-weight:500; margin-top:3px; letter-spacing:.02em}
+.salud .txt{flex:1; min-width:0}
+.salud .txt small{color:var(--suave); font-size:12px; font-weight:500; text-transform:uppercase; letter-spacing:.06em}
+.salud .txt b{display:block; font-size:20px; font-weight:600; letter-spacing:-.02em; color:var(--texto); margin:2px 0 8px}
+.resumen{display:flex; flex-wrap:wrap; gap:6px}
+
+/* ===== 7. Chip de estado (translúcido, texto en color) ===== */
+.chip{
+  font-size:12px; font-weight:500; padding:2px 8px; border-radius:var(--radio-xs); line-height:18px;
+  background:var(--bg-c); color:var(--c); border:1px solid color-mix(in srgb,var(--c) 28%,transparent);
+  flex:none; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
+}
+.chip .punto{width:6px; height:6px; border-radius:50%; background:var(--c)}
+
+/* ===== 8. Grilla de servicios (tile) ===== */
+.servicios{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px}
+.serv{
+  background:var(--panel); border:1px solid var(--linea); border-radius:var(--radio); padding:12px;
+  display:flex; flex-direction:column; gap:8px; min-height:92px; position:relative; overflow:hidden;
+  box-shadow:var(--sombra-sm); transition:border-color var(--rapido) var(--curva), transform var(--rapido) var(--curva);
+}
+.serv::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--c)}
+.serv.crit{background:linear-gradient(var(--crit-bg),var(--crit-bg)),var(--panel)}
+.serv.warn{background:linear-gradient(var(--warn-bg),var(--warn-bg)),var(--panel)}
+.serv:hover{border-color:#484f58}
+.serv .cab{display:flex; align-items:center; gap:8px}
+.serv .cab .ic{width:28px; height:28px; border-radius:var(--radio-xs); display:grid; place-items:center; background:var(--bg-c); color:var(--c); flex:none}
+.serv .cab b{font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.serv .pie{display:flex; align-items:baseline; justify-content:space-between; gap:6px; margin-top:auto}
+.serv .pct{font-size:20px; font-weight:600; letter-spacing:-.02em}
+.serv .pct small{font-size:12px; color:var(--suave); font-weight:500}
+.serv .est{font-size:12px; color:var(--c); font-weight:500}
+.serv:active{transform:scale(.99)}
+.serv.marcado{outline:2px solid var(--acento); outline-offset:2px}
+
+/* ===== 8b. Fila de servicio ===== */
+.grupo-red{display:flex; flex-direction:column; gap:8px}
+.fila-serv{
+  display:flex; align-items:center; gap:12px; padding:12px 12px 12px 14px; min-height:64px; position:relative; overflow:hidden;
+  background:var(--panel); border:1px solid var(--linea); border-radius:var(--radio);
+  box-shadow:var(--sombra-sm);
+  transition:border-color var(--rapido) var(--curva), background var(--rapido) var(--curva), transform var(--rapido) var(--curva);
+}
+.fila-serv::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--c)}
+.fila-serv.crit{background:linear-gradient(var(--crit-bg),var(--crit-bg)),var(--panel)}
+.fila-serv.warn{background:linear-gradient(var(--warn-bg),var(--warn-bg)),var(--panel)}
+.fila-serv:hover{border-color:#484f58}
+.fila-serv .ic{
+  width:36px; height:36px; border-radius:var(--radio-sm); display:grid; place-items:center; flex:none;
+  background:var(--panel2); color:var(--c); border:1px solid var(--linea-suave);
+}
+.fila-serv .cuerpo{flex:1; min-width:0}
+.fila-serv .cuerpo b{display:block; font-size:15px; font-weight:600; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.fila-serv .cuerpo small{color:var(--suave); font-size:12px}
+.fila-serv .cont{display:flex; flex-direction:column; align-items:flex-end; line-height:1; flex:none; min-width:34px}
+.fila-serv .cont b{font-size:20px; font-weight:600; color:var(--texto); letter-spacing:-.02em}
+.fila-serv.crit .cont b, .fila-serv.warn .cont b{color:var(--c)}
+.fila-serv .cont small{font-size:12px; color:var(--tenue); margin-top:4px; letter-spacing:.04em}
+.fila-serv:active{transform:scale(.995)}
+.titulo-red{
+  margin:8px 2px 0; font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--suave);
+  display:flex; justify-content:space-between; gap:8px;
+}
+.titulo-red span:last-child{color:var(--tenue); font-weight:500; text-transform:none; letter-spacing:0; font-size:12px}
+
+/* ===== 9. Lista genérica ===== */
+.lista{list-style:none; margin:0; padding:0; display:flex; flex-direction:column}
+.lista li{display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--linea-suave); min-height:50px}
+.lista li:first-child{border-top:0; padding-top:2px}
+.lista .ic{
+  width:32px; height:32px; border-radius:var(--radio-sm); flex:none; display:grid; place-items:center;
+  background:var(--bg-c); color:var(--c);
+}
+.lista .cuerpo{flex:1; min-width:0}
+.lista .cuerpo b{display:block; font-size:14px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.lista .cuerpo small{color:var(--suave); font-size:12px}
+.lista .lado{color:var(--tenue); font-size:12px; flex:none; text-align:right}
+
+/* ===== 10. Barra de progreso / ranking ===== */
+.barra{display:block; height:4px; border-radius:2px; background:var(--linea-suave); overflow:hidden; flex:1}
+.barra i{display:block; height:100%; background:var(--c); border-radius:2px; opacity:.85; transition:width var(--lento) var(--curva)}
+.pos{
+  min-width:26px; height:24px; padding:0 6px; border-radius:var(--radio-xs); display:grid; place-items:center;
+  font-size:12px; font-weight:600; background:var(--panel2); color:var(--suave); border:1px solid var(--linea-suave); flex:none;
+}
+.pct-fijo{width:52px; text-align:right; font-weight:500; font-size:13px; flex:none; font-variant-numeric:tabular-nums}
+
+/* ===== 11. Filtros (control segmentado) ===== */
+.filtros{display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none}
+.filtros::-webkit-scrollbar{display:none}
+.filtros button{
+  flex:none; min-height:34px; padding:0 12px; border-radius:var(--radio-sm); font-size:13px; font-weight:500;
+  background:var(--panel); border:1px solid var(--linea); color:var(--suave); display:flex; align-items:center; gap:6px;
+  transition:background var(--rapido) var(--curva), color var(--rapido) var(--curva), border-color var(--rapido) var(--curva);
+}
+.filtros button:hover{color:var(--texto); background:var(--panel2)}
+.filtros button .num{color:var(--tenue); font-size:12px}
+.filtros button.activo{background:var(--panel2); border-color:#484f58; color:var(--texto); box-shadow:inset 0 -2px 0 var(--acento)}
+.filtros button.activo .num{color:var(--suave)}
+
+/* ===== 12. Menú inferior fijo ===== */
+.nav{
+  position:fixed; left:0; right:0; bottom:0; z-index:30;
+  height:calc(var(--nav) + env(safe-area-inset-bottom)); padding-bottom:env(safe-area-inset-bottom);
+  background:rgba(13,17,23,.92); backdrop-filter:saturate(160%) blur(14px); -webkit-backdrop-filter:saturate(160%) blur(14px);
+  border-top:1px solid var(--linea-suave);
+  display:grid; grid-template-columns:repeat(5,1fr); align-items:center;
+}
+.nav a{
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; font-size:12px; font-weight:500;
+  color:var(--tenue); height:100%; position:relative; transition:color var(--rapido) var(--curva);
+}
+.nav a:hover{color:var(--suave)}
+.nav a.activo{color:var(--texto)}
+.nav a.activo svg.i{color:var(--acento)}
+.nav a.activo::before{content:""; position:absolute; top:0; width:24px; height:2px; border-radius:0 0 2px 2px; background:var(--acento)}
+.fab{
+  width:48px; height:48px; margin:0 auto; border-radius:var(--radio); background:var(--acento); color:#fff;
+  display:grid; place-items:center; border:1px solid rgba(255,255,255,.08);
+  box-shadow:0 1px 0 rgba(1,4,9,.3), 0 4px 12px -4px rgba(31,111,235,.5);
+  transition:transform var(--medio) var(--curva), background var(--rapido) var(--curva);
+}
+.fab svg{width:22px; height:22px}
+.fab:hover{background:#3b8bff}
+.fab:active{transform:scale(.95)}
+.fab.abierto{transform:rotate(45deg)}
+
+/* ===== 13. Hoja de acciones rápidas ===== */
+.velo{position:fixed; inset:0; background:rgba(1,4,9,.55); z-index:25; opacity:0; pointer-events:none; transition:opacity var(--medio) var(--curva)}
+.velo.on{opacity:1; pointer-events:auto}
+.hoja{
+  position:fixed; left:0; right:0; bottom:calc(var(--nav) + env(safe-area-inset-bottom)); z-index:26;
+  background:var(--panel); border:1px solid var(--linea); border-bottom:0; border-radius:var(--radio) var(--radio) 0 0;
+  padding:16px 16px 20px; max-width:600px; margin:0 auto; box-shadow:0 -8px 24px -12px rgba(1,4,9,.6);
+  transform:translateY(calc(100% + var(--nav) + 60px)); visibility:hidden;
+  transition:transform var(--medio) var(--curva), visibility 0s var(--medio);
+}
+.hoja.on{transform:none; visibility:visible; transition:transform var(--medio) var(--curva)}
+.hoja h3{margin:0 0 12px; font-size:12px; font-weight:600; color:var(--suave); text-transform:uppercase; letter-spacing:.06em}
+.accesos{display:grid; grid-template-columns:repeat(4,1fr); gap:8px}
+.acceso{
+  display:flex; flex-direction:column; align-items:center; gap:6px; padding:10px 4px; border-radius:var(--radio-sm);
+  font-size:12px; color:var(--suave); min-height:72px; text-align:center; transition:background var(--rapido) var(--curva);
+}
+.acceso:hover{background:var(--panel2); color:var(--texto)}
+.acceso .ic{
+  width:40px; height:40px; border-radius:var(--radio-sm); display:grid; place-items:center;
+  background:var(--panel2); color:var(--texto); border:1px solid var(--linea);
+  transition:transform var(--rapido) var(--curva), border-color var(--rapido) var(--curva);
+}
+.acceso:active .ic{transform:scale(.95); border-color:var(--acento)}
+
+/* ===== 14. Botones ===== */
+.boton{
+  width:100%; min-height:44px; border-radius:var(--radio-sm); font-weight:500; display:flex; align-items:center; justify-content:center; gap:8px;
+  background:var(--panel2); border:1px solid var(--linea); box-shadow:var(--sombra-sm);
+  transition:background var(--rapido) var(--curva), border-color var(--rapido) var(--curva);
+}
+.boton:hover{border-color:#484f58}
+.boton.peligro{color:var(--crit); background:var(--panel)}
+.boton.peligro:hover{background:var(--crit-bg); border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+
+/* ===== 15. Aviso y vacío ===== */
+.toast{
+  position:fixed; left:50%; bottom:calc(var(--nav) + 16px + env(safe-area-inset-bottom)); transform:translate(-50%,8px);
+  background:var(--panel2); border:1px solid var(--linea); padding:10px 14px; border-radius:var(--radio-sm); font-size:13px;
+  opacity:0; transition:opacity var(--medio) var(--curva), transform var(--medio) var(--curva);
+  z-index:40; pointer-events:none; box-shadow:var(--sombra); max-width:90vw;
+}
+.toast.on{opacity:1; transform:translate(-50%,0)}
+.vacio{color:var(--suave); text-align:center; padding:28px 12px; font-size:13px}
+.vacio svg{width:32px; height:32px; color:var(--tenue); margin-bottom:8px; stroke-width:1.5}
+
+/* ===== 16. Tablet ===== */
+@media (min-width:700px){
+  main{padding:24px}
+  .servicios{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .dos-col{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gap)}
+  .nav{
+    left:50%; right:auto; width:min(480px,100%); transform:translateX(-50%); bottom:16px;
+    border:1px solid var(--linea); border-radius:var(--radio); height:var(--nav); padding:0; box-shadow:var(--sombra);
+  }
+  body{padding-bottom:calc(var(--nav) + 40px)}
+  .hoja{bottom:calc(var(--nav) + 24px); border-radius:var(--radio); border-bottom:1px solid var(--linea)}
+  .toast{bottom:calc(var(--nav) + 32px)}
+}
+/* ===== 17. Escritorio ===== */
+@media (min-width:1100px){
+  .servicios{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+/* ===== INICIO RBAC: ocultamiento por rol (body[data-rol]) ===== */
+body[data-rol="LECTURA"] .fab,
+body[data-rol="LECTURA"] .req-escritura,
+body[data-rol="LECTURA"] .req-admin,
+body[data-rol="LECTURA"] .req-gestor,
+body[data-rol="OPERADOR"] .req-admin,
+body[data-rol="OPERADOR"] .req-gestor,
+body[data-rol="GESTOR"] .req-admin{display:none !important}
+/* ===== FIN RBAC ===== */
+
+/* ===== 18. Formularios, diálogos y fichas (módulo Usuarios / Equipos / Auditoría) ===== */
+.boton.primario{background:var(--acento); border-color:transparent; color:#fff}
+.boton.primario:hover{background:#3b8bff; border-color:transparent}
+.boton.chico{width:auto; min-height:34px; padding:0 12px; font-size:13px}
+.btns{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px}
+.btns .boton:not(.chico){flex:1}
+.hoja.dialogo{z-index:27; max-height:min(78vh, 640px); overflow-y:auto}
+.campo{display:flex; flex-direction:column; gap:6px; margin:0 0 12px; border:0; padding:0; min-width:0}
+.campo > span, .campo legend{font-size:12px; color:var(--suave); font-weight:500; padding:0; margin-bottom:6px}
+.campo input, .campo select, .campo textarea{
+  font:inherit; color:var(--texto); background:var(--bg); border:1px solid var(--linea); border-radius:var(--radio-sm);
+  padding:10px 12px; min-height:42px; width:100%;
+}
+.campo textarea{resize:vertical; min-height:72px}
+.campo input:focus, .campo select:focus, .campo textarea:focus{outline:2px solid var(--acento); outline-offset:0; border-color:transparent}
+.opciones{display:flex; flex-direction:column; gap:2px; max-height:200px; overflow-y:auto; padding:6px 10px; border:1px solid var(--linea); border-radius:var(--radio-sm); background:var(--bg)}
+.opcion{display:flex; align-items:center; gap:10px; font-size:14px; min-height:36px; cursor:pointer}
+.opcion input{width:18px; height:18px; accent-color:var(--acento); flex:none}
+.opciones small{color:var(--tenue); padding:6px 0}
+.lista li.clic{cursor:pointer}
+.lista li.clic:hover .cuerpo b{color:var(--acento)}
+.lista li.alto{align-items:flex-start}
+.ficha{display:grid; grid-template-columns:auto minmax(0,1fr); gap:6px 14px; font-size:13px; margin:0}
+.ficha dt{color:var(--suave)}
+.ficha dd{margin:0; min-width:0; overflow-wrap:anywhere}
+.etiquetas{display:flex; flex-wrap:wrap; gap:6px}
+.cambio{display:block; font-size:12px; color:var(--tenue); margin-top:3px; overflow-wrap:anywhere}
+.lista .cuerpo .cambio b, .cambio b{display:inline; font-size:12px; color:var(--suave); font-weight:500}
+.cab-ficha{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+.cab-ficha b{flex:1; min-width:0; font-size:16px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.sub{margin:16px 0 6px; font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--suave)}
+.enlace{display:flex; align-items:center; gap:12px; width:100%}
+.enlace .lado svg{width:16px; height:16px; color:var(--tenue)}
+
+/* ===== 19. Debate del incidente (chat) ===== */
+.chat{display:flex; flex-direction:column; gap:8px}
+.burbuja{
+  max-width:85%; align-self:flex-start; background:var(--panel); border:1px solid var(--linea);
+  border-radius:12px 12px 12px 4px; padding:8px 12px; box-shadow:var(--sombra-sm); position:relative; min-width:0;
+}
+.burbuja.mia{align-self:flex-end; background:color-mix(in srgb,var(--acento) 16%,var(--panel)); border-color:color-mix(in srgb,var(--acento) 32%,var(--linea)); border-radius:12px 12px 4px 12px}
+.burbuja .autor{display:block; font-size:12px; font-weight:600; color:var(--info); margin-bottom:2px}
+.burbuja .autor small{color:var(--tenue); font-weight:500; margin-left:4px}
+.burbuja.mia .autor{display:none}
+.burbuja .texto{white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px}
+.burbuja .hora{display:block; text-align:right; font-size:12px; color:var(--tenue); margin-top:4px}
+.burbuja.borrada .texto{font-style:italic; color:var(--tenue)}
+.burbuja img{display:block; max-width:100%; max-height:280px; border-radius:8px; margin:4px 0; cursor:zoom-in; background:var(--bg)}
+.burbuja .archivo{display:flex; align-items:center; gap:8px; width:100%; padding:8px 10px; border:1px solid var(--linea); border-radius:8px; background:var(--bg); margin:4px 0; font-size:13px; text-align:left}
+.burbuja .archivo:hover{border-color:#484f58}
+.burbuja .borrar{font-size:12px; color:var(--tenue); margin-right:10px; text-decoration:underline}
+.burbuja .borrar:hover{color:var(--crit)}
+.aviso-sistema{align-self:center; font-size:12px; color:var(--suave); background:var(--panel2); border-radius:999px; padding:4px 12px; text-align:center; max-width:92%}
+.redactor{
+  position:fixed; left:0; right:0; bottom:calc(var(--nav) + env(safe-area-inset-bottom)); z-index:22;
+  background:rgba(13,17,23,.96); border-top:1px solid var(--linea-suave); padding:8px 12px; display:flex; flex-direction:column; gap:6px;
+}
+.redactor .fila{display:flex; align-items:flex-end; gap:8px; width:100%}
+.redactor textarea{
+  flex:1; min-width:0; font:inherit; color:var(--texto); background:var(--panel); border:1px solid var(--linea);
+  border-radius:20px; padding:10px 14px; min-height:42px; max-height:120px; resize:none;
+}
+.redactor textarea:focus{outline:2px solid var(--acento); outline-offset:0; border-color:transparent}
+.redactor .btn-icono{border-radius:50%; width:42px; height:42px}
+.redactor .enviar{background:var(--acento); color:#fff; border-color:transparent}
+.redactor .previa{font-size:12px; color:var(--suave); display:flex; align-items:center; gap:8px}
+.redactor .previa button{color:var(--crit); font-size:12px}
+body.con-redactor{padding-bottom:calc(var(--nav) + 100px + env(safe-area-inset-bottom))}
+.visor{position:fixed; inset:0; z-index:50; background:rgba(1,4,9,.92); display:grid; place-items:center; padding:16px; cursor:zoom-out}
+.visor img{max-width:100%; max-height:100%; border-radius:8px}
+.barra-debate{
+  position:sticky; top:calc(61px + env(safe-area-inset-top)); z-index:15; display:flex; flex-wrap:wrap; gap:8px;
+  padding:8px 0; margin:-4px 0; background:linear-gradient(var(--bg) 80%, transparent);
+}
+.barra-debate svg.i{width:15px; height:15px}
+.burbuja .marca{display:block; font-size:12px; font-weight:600; color:var(--warn); margin-bottom:2px}
+.burbuja.nota{background:color-mix(in srgb,var(--warn) 12%,var(--panel)); border-color:color-mix(in srgb,var(--warn) 40%,var(--linea)); align-self:stretch; max-width:100%}
+.burbuja.fijada:not(.nota){border-color:color-mix(in srgb,var(--warn) 45%,var(--linea))}
+.burbuja.resaltada{outline:2px solid var(--acento); outline-offset:2px}
+.burbuja .hora .borrar + .borrar{margin-left:-2px}
+.burbuja .mencion{color:var(--info); font-weight:600}
+.burbuja.mencionado{box-shadow:inset 3px 0 0 var(--crit), var(--sombra-sm)}
+.sugerencias{display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--linea); border-radius:12px; overflow-y:auto; max-height:min(300px, 40vh); box-shadow:var(--sombra)}
+.sugerencias[hidden]{display:none}
+.sugerencias button{display:flex; align-items:center; gap:12px; text-align:left; padding:8px 12px; min-height:52px; border-top:1px solid var(--linea-suave)}
+.sugerencias button:first-child{border-top:0}
+.sugerencias button:hover, .sugerencias button.activa{background:var(--panel2)}
+.sugerencias .avatar{width:36px; height:36px; border-radius:50%; display:grid; place-items:center; flex:none; color:#fff; font-size:13px; font-weight:700}
+.sugerencias .quien{display:flex; flex-direction:column; min-width:0}
+.sugerencias .quien b{font-size:14px; font-weight:600; color:var(--texto); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.sugerencias .quien small{font-size:12px; color:var(--suave); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.sugerencias .quien em{color:var(--warn); font-style:normal}
+.sugerencias .quien .equipos-u{color:var(--tenue); font-size:12px; margin-top:1px}
+.sugerencias .avatar.grupo{background:var(--panel2); border:1px solid var(--linea); font-size:16px}
+.burbuja .mencion.equipo{color:var(--ok)}
+.sugerencias mark{background:none; color:var(--info); font-weight:700}
+.sugerencias .sin-resultados{padding:12px; font-size:13px; color:var(--tenue)}
+.opcion.deshabilitada{color:var(--tenue); cursor:default}
+.acceso.alarma .ic{background:var(--crit-bg); color:var(--crit); border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+.boton-alarma{
+  width:100%; min-height:96px; border-radius:var(--radio); font-size:18px; font-weight:700; color:#fff; letter-spacing:.01em;
+  background:linear-gradient(180deg,#e5534b,#c93c37); border:1px solid rgba(255,255,255,.12); box-shadow:0 8px 24px -10px rgba(248,81,73,.7);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; transition:transform var(--rapido) var(--curva), filter var(--rapido);
+}
+.boton-alarma small{font-size:13px; font-weight:500; opacity:.9}
+.boton-alarma:active{transform:scale(.98)}
+.boton-alarma.paso-1{filter:saturate(1.2)} .boton-alarma.paso-2{filter:saturate(1.5) brightness(1.08); animation:latido .6s ease-in-out infinite}
+.boton-alarma:disabled{opacity:.5; animation:none}
+@keyframes latido{50%{transform:scale(1.02)}}
+.puntos-confirmacion{display:flex; justify-content:center; gap:10px; margin-top:10px}
+.puntos-confirmacion i{width:12px; height:12px; border-radius:50%; background:var(--linea)}
+.puntos-confirmacion i.on{background:var(--crit)}
+.selector-inc{display:flex; flex-direction:column; gap:8px}
+.selector-inc label{display:flex; gap:12px; align-items:flex-start; padding:12px; border:1px solid var(--linea); border-radius:var(--radio-sm); background:var(--panel); cursor:pointer}
+.selector-inc label:has(input:checked){border-color:var(--crit); background:color-mix(in srgb,var(--crit) 8%,var(--panel))}
+.selector-inc input{accent-color:var(--crit); width:18px; height:18px; margin-top:2px; flex:none}
+.selector-inc b{display:block; font-size:14px}
+.selector-inc small{color:var(--suave); font-size:12px}
+.debates-serv{display:flex; flex-wrap:wrap; gap:6px; margin:-2px 0 4px 14px}
+.chip-debate{
+  display:inline-flex; align-items:center; gap:6px; min-height:30px; padding:0 10px; border-radius:999px; font-size:12px; font-weight:500;
+  background:var(--info-bg); color:var(--info); border:1px solid color-mix(in srgb,var(--info) 30%,transparent);
+}
+.chip-debate svg.i{width:14px; height:14px}
+.chip-debate.nuevo{background:var(--crit-bg); color:var(--texto); border-color:color-mix(in srgb,var(--crit) 40%,transparent)}
+.chip-debate:hover{filter:brightness(1.15)}
+.pastilla{display:inline-grid; place-items:center; min-width:20px; height:20px; padding:0 6px; border-radius:10px; background:var(--crit); color:#fff; font-size:12px; font-weight:600}
+@media (min-width:700px){
+  .redactor{left:50%; right:auto; width:min(720px,100%); transform:translateX(-50%); bottom:calc(var(--nav) + 24px); border:1px solid var(--linea); border-radius:var(--radio)}
+  body.con-redactor{padding-bottom:calc(var(--nav) + 130px)}
+}
+
+@media (prefers-reduced-motion:reduce){ *{animation:none!important; transition:none!important} }
+
+/* 20 · Matrices de escalamiento */
+.nivel-esc{border:1px solid var(--linea); border-radius:var(--radio-sm); background:var(--bg); padding:12px; margin:0 0 10px}
+.nivel-esc .cab{display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap}
+.nivel-esc .cab small{color:var(--tenue)}
+.nivel-esc .acciones-nivel{margin-left:auto; display:flex; gap:6px}
+.nivel-esc .acciones-nivel .boton{min-width:38px; padding:0 8px}
+.nivel-esc .acciones-nivel .boton:disabled{opacity:.35; cursor:default}
+.con-unidad{display:flex; align-items:center; gap:8px}
+.con-unidad input{max-width:110px}
+.con-unidad em{font-style:normal; color:var(--suave); font-size:13px}
+.toggles{display:flex; flex-wrap:wrap; gap:6px}
+.toggle{cursor:pointer}
+.toggle input{position:absolute; opacity:0; pointer-events:none}
+.toggle span{display:inline-flex; align-items:center; min-height:32px; padding:0 12px; border-radius:999px; border:1px solid var(--linea); background:var(--panel); color:var(--suave); font-size:13px}
+.toggle input:checked + span{background:color-mix(in srgb,var(--acento) 18%,transparent); border-color:var(--acento); color:var(--texto,#e6edf3); font-weight:600}
+.toggle input:focus-visible + span{outline:2px solid var(--acento)}
+.linea-tiempo{display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 12px; font-size:12px}
+.linea-tiempo span{padding:4px 10px; border-radius:999px; background:var(--panel2); color:var(--suave); font-weight:600}
+.linea-tiempo i{color:var(--tenue); font-style:normal}
+
+/* 21 · INC por equipo: Tomar / Reconocer */
+.eq-inc{display:flex; flex-direction:column; gap:6px; margin-top:8px}
+.eq-fila{display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 10px; border-radius:var(--radio-sm); background:var(--bg); border:1px solid var(--linea); border-left:3px solid var(--tenue)}
+.eq-fila.ok{border-left-color:var(--ok)} .eq-fila.warn{border-left-color:var(--warn)} .eq-fila.crit{border-left-color:var(--crit)}
+.eq-nom{display:flex; flex-direction:column; min-width:0; flex:1}
+.eq-nom b{font-size:13px} .eq-nom small{font-size:12px; color:var(--suave); white-space:normal}
+.eq-btns{display:flex; gap:6px; flex-wrap:wrap}
+.eq-inc.compacto .eq-fila{padding:6px 8px}
+.eq-inc.compacto .boton.chico{min-height:30px; padding:0 10px; font-size:12px}
+.debates-serv.col{flex-direction:column; align-items:stretch; margin:0 0 8px 14px}
+.inc-serv{border-left:2px solid var(--linea); padding:2px 0 2px 10px}
+.inc-serv-cab{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--suave)}
+.inc-serv .eq-inc{margin-top:4px}
+
+/* 22 · Chats estilo WhatsApp */
+.badge.verde{background:var(--ok); color:#0b0f17}
+.buscador-chat{display:flex; align-items:center; gap:8px; padding:0 14px; min-height:42px; border-radius:999px; background:var(--panel); border:1px solid var(--linea); color:var(--suave)}
+.buscador-chat input{flex:1; min-width:0; background:none; border:0; color:var(--texto); font:inherit; font-size:14px; outline:none}
+.buscador-chat svg.i{width:18px; height:18px}
+.chats{list-style:none; margin:0; padding:0; background:var(--panel); border:1px solid var(--linea); border-radius:var(--radio); overflow:hidden}
+.chat-fila{display:flex; gap:12px; align-items:center; padding:10px 14px; cursor:pointer; border-bottom:1px solid var(--linea-suave)}
+.chat-fila:last-child{border-bottom:0}
+.chat-fila:hover{background:var(--panel2)}
+.chat-avatar{width:48px; height:48px; border-radius:50%; flex:none; display:grid; place-items:center; font-weight:700; font-size:14px}
+.chat-avatar.crit{background:var(--crit-bg); color:var(--crit); border:1px solid color-mix(in srgb,var(--crit) 35%,transparent)}
+.chat-avatar.warn{background:var(--warn-bg); color:var(--warn); border:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}
+.chat-avatar.gris{background:var(--panel2); font-size:18px}
+.chat-cuerpo{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
+.chat-l1, .chat-l2{display:flex; align-items:center; gap:8px; min-width:0}
+.chat-l1 b{flex:1; min-width:0; font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.chat-l1 small{font-size:12px; color:var(--tenue); flex:none}
+.chat-fila.nuevo .chat-l1 small{color:var(--ok); font-weight:600}
+.chat-prev{flex:1; min-width:0; font-size:13px; color:var(--suave); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.chat-prev b{font-weight:600; color:var(--suave)}
+.chat-fila.nuevo .chat-prev{color:var(--texto)}
+.chat-num{flex:none; min-width:20px; height:20px; padding:0 6px; border-radius:10px; background:var(--ok); color:#0b0f17; font-size:12px; font-weight:700; display:grid; place-items:center}
+.chat-l3{font-size:12px; color:var(--tenue); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.chat-tag{display:inline-block; margin-left:4px; padding:0 6px; border-radius:6px; font-size:12px; font-weight:600}
+.chat-tag.ok{background:var(--ok-bg); color:var(--ok)} .chat-tag.warn{background:var(--warn-bg); color:var(--warn)}
+.chat-vacio{padding:24px 14px; text-align:center; color:var(--tenue); font-size:13px}
+.chip .p-cat{margin-left:5px; font-size:12px; font-weight:600; opacity:.7}
+.chat-cat{font-weight:600} .chat-cat.crit{color:var(--crit)} .chat-cat.warn{color:var(--warn)}
+.nom-cat{font-size:12px; color:var(--suave); min-width:96px}
+.inc-serv-cab .chip{min-height:0; padding:1px 8px; font-size:12px}
+
+/* 23 · Configuración: clasificación de INC */
+.fila-cfg{display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:center; margin:0 0 8px}
+.fila-cfg.tres{grid-template-columns:1fr; margin:0}
+.fila-cfg input, .fila-cfg select{min-height:38px; padding:0 10px; border-radius:var(--radio-sm); border:1px solid var(--linea); background:var(--bg); color:var(--texto); font:inherit; font-size:14px; min-width:0}
+.fila-cfg .boton:disabled{opacity:.35; cursor:default}
+.inc-serv-cab{flex-wrap:wrap; row-gap:4px}
+.chip.sla{min-height:0; padding:1px 8px; font-size:12px}
+
+/* 24 · Rediseño fase 1: avisos en cola, íconos en estados, alturas táctiles */
+.avisos{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(var(--nav) + 16px + env(safe-area-inset-bottom)); z-index:40;
+  display:flex; flex-direction:column; gap:8px; width:min(420px, calc(100vw - 32px)); pointer-events:none}
+.avisos .toast{position:static; transform:translateY(8px); left:auto; bottom:auto; max-width:none; display:flex; align-items:center; gap:12px;
+  font-size:14px; line-height:1.4; pointer-events:auto}
+.avisos .toast.on{transform:none}
+.avisos .toast button{margin-left:auto; flex:none; background:none; border:0; color:var(--acento); font-weight:600; font-size:14px; min-height:32px; cursor:pointer}
+@media (min-width:700px){ .avisos{bottom:calc(var(--nav) + 32px)} }
+.eq-nom small{display:flex; align-items:flex-start; gap:5px}
+.eq-nom small svg.i{width:14px; height:14px; flex:none; margin-top:2px}
+.eq-btns .boton svg.i, .boton.chico svg.i{width:16px; height:16px}
+.boton.chico{min-height:40px}
+.eq-inc.compacto .boton.chico{min-height:36px; font-size:13px}
+.chip svg.i{width:13px; height:13px}
+.chip.sla{gap:4px}
+.ic-txt{display:inline-flex; align-items:center; gap:5px}
+.ic-txt svg.i{width:14px; height:14px}
+/* Indicadores del Escritorio */
+.kpis{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px}
+@media (min-width:560px){ .kpis{grid-template-columns:repeat(4,minmax(0,1fr))} }
+.kpi{display:flex; flex-direction:column; gap:2px; text-align:left; padding:10px 12px; min-height:64px; border-radius:var(--radio-sm);
+  background:var(--panel); border:1px solid var(--linea); color:var(--texto); text-decoration:none; transition:background var(--rapido) var(--curva)}
+.kpi:hover{background:var(--panel2)}
+.kpi .k-tit{display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--c, var(--suave))}
+.kpi .k-tit svg.i{width:15px; height:15px}
+.kpi .k-num{font-size:24px; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums}
+.kpi.cero{opacity:.55}
+.kpi.cero .k-tit{color:var(--tenue)}
+.kpi.crit{--c:var(--crit)} .kpi.warn{--c:var(--warn)}
+.solo-lector{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap}
+.buscador-chat{margin-bottom:0}
+small{font-size:max(12px, .8em)}
+
+/* 25 · Rediseño fase 2: barra, sub-pestañas de Inicio, tarjeta de INC única, ficha con pestañas */
+.nav .badge{top:4px; right:calc(50% - 22px)}
+.subnav{display:flex; gap:4px; padding:4px; border-radius:var(--radio-sm); background:var(--panel2); border:1px solid var(--linea)}
+.subnav a{flex:1; text-align:center; padding:8px 6px; border-radius:6px; font-size:14px; font-weight:500; color:var(--suave); min-height:36px}
+.subnav a.activo{background:var(--panel); color:var(--texto); box-shadow:var(--sombra-sm)}
+.tinc{position:relative; display:flex; flex-direction:column; gap:6px; padding:12px 12px 12px 16px; border-radius:var(--radio-sm);
+  background:var(--panel); border:1px solid var(--linea)}
+.tinc::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px; border-radius:var(--radio-sm) 0 0 var(--radio-sm); background:var(--c, var(--tenue))}
+.tinc.crit{--c:var(--crit)} .tinc.warn{--c:var(--warn)} .tinc.ok{--c:var(--ok)}
+.tinc-l1{display:flex; align-items:flex-start; gap:8px}
+.tinc-l1 b{flex:1; min-width:0; font-size:15px; font-weight:600; line-height:1.35}
+.tinc-meta{display:flex; flex-wrap:wrap; align-items:center; gap:6px}
+.tinc-meta .chip{min-height:0; padding:1px 8px}
+.tinc-l2{font-size:13px; color:var(--suave)}
+.tinc-ult{font-size:13px; color:var(--tenue); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.tinc .btns{margin-top:2px}
+.tinc .eq-inc{margin-top:2px}
+.mono-inc{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:var(--suave)}
+.tinc.n1{flex-direction:row; align-items:center; gap:10px; padding:8px 10px 8px 14px}
+.tinc.n1 .tinc-cuerpo{flex:1; min-width:0; display:flex; flex-direction:column; gap:4px}
+.tinc.n1 .tinc-cuerpo b{font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.incs-serv{display:flex; flex-direction:column; gap:6px; margin:-2px 0 8px 14px}
+.lista-tinc{display:flex; flex-direction:column; gap:8px; list-style:none; margin:0; padding:0}
+.seccion-tit{display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin:4px 2px 0}
+.seccion-tit h2{margin:0; font-size:16px; font-weight:600}
+.seccion-tit small{color:var(--tenue)}
+.vacio-suave{border:1px dashed var(--linea); border-radius:var(--radio-sm); padding:16px; text-align:center; color:var(--suave); font-size:14px}
+.vacio-suave svg.i{width:22px; height:22px; color:var(--ok); display:block; margin:0 auto 4px}
+/* Ficha de INC */
+.ficha-cab{display:flex; flex-direction:column; gap:8px}
+.ficha-cab h2{margin:0; font-size:19px; font-weight:600; line-height:1.3}
+.pestanas{position:sticky; top:calc(var(--top, 60px)); z-index:15; display:flex; background:var(--bg); border-bottom:1px solid var(--linea); margin:0 -4px}
+.pestanas button{flex:1; min-height:44px; background:none; border:0; border-bottom:2px solid transparent; color:var(--tenue); font:inherit; font-size:14px; font-weight:500; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px}
+.pestanas button.activa{color:var(--texto); border-bottom-color:var(--acento)}
+.pestanas .pastilla{min-width:18px; height:18px; font-size:12px}
+.historial{list-style:none; margin:0; padding:0 0 0 18px; border-left:1px solid var(--linea); display:flex; flex-direction:column; gap:12px}
+.historial li{position:relative; font-size:14px}
+.historial li::before{content:""; position:absolute; left:-23px; top:6px; width:9px; height:9px; border-radius:50%; background:var(--acento); border:2px solid var(--bg)}
+.historial small{display:block; color:var(--tenue)}
+.grupo-cfg{margin:12px 0 4px}
+details.demo{border:1px dashed var(--linea); border-radius:var(--radio); padding:10px 14px; background:var(--panel)}
+details.demo summary{cursor:pointer; font-weight:600; min-height:32px; display:flex; align-items:center}
+.lista > li.sin-borde, li.sin-borde{display:block; list-style:none; padding:0; border:0; background:none; min-height:0; margin:0 0 6px}
+.lista > li.sin-borde::before{display:none}
+.redactor[hidden]{display:none!important}
+
+/* 26 · Rediseño fase 3: línea de tiempo de la matriz, grilla de clasificación, pendientes con deshacer */
+.subnav button{flex:1; text-align:center; padding:8px 6px; border-radius:6px; font:inherit; font-size:14px; font-weight:500; color:var(--suave); min-height:36px; background:none; border:0; cursor:pointer}
+.subnav button.activo{background:var(--panel); color:var(--texto); box-shadow:var(--sombra-sm)}
+.linea-niveles{display:flex; flex-direction:column; gap:8px; margin:0 0 10px; position:relative}
+.nivel-resumen{display:flex; align-items:center; gap:12px; width:100%; text-align:left; padding:10px 12px; border-radius:var(--radio-sm);
+  background:var(--bg); border:1px solid var(--linea); color:var(--texto); font:inherit; cursor:pointer}
+.nivel-resumen:hover{background:var(--panel2)}
+.nivel-resumen .nr-tiempo{flex:none; width:44px; text-align:center; font-size:14px; font-weight:600; color:var(--suave)}
+.nivel-resumen .nr-cuerpo{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
+.nivel-resumen .nr-cuerpo b{font-size:14px; font-weight:600; display:flex; gap:8px; align-items:center}
+.nivel-resumen .nr-cuerpo small{color:var(--suave)}
+.nivel-resumen > svg.i{width:16px; height:16px; color:var(--tenue); flex:none}
+.grilla-cat{width:100%; border-collapse:separate; border-spacing:6px; font-size:13px}
+.grilla-cat th{color:var(--suave); font-weight:500; text-align:left; font-size:12px}
+.grilla-cat td{vertical-align:top}
+.celda-cat{display:flex; flex-direction:column; gap:2px; width:100%; min-height:64px; text-align:left; padding:8px; border-radius:var(--radio-sm);
+  background:var(--bg-c, var(--panel2)); border:1px solid color-mix(in srgb, var(--c, var(--linea)) 35%, transparent); color:var(--texto); font:inherit; cursor:pointer}
+.celda-cat.crit{--c:var(--crit); --bg-c:var(--crit-bg)} .celda-cat.warn{--c:var(--warn); --bg-c:var(--warn-bg)}
+.celda-cat b{color:var(--c, var(--texto)); font-size:13px; font-weight:600; line-height:1.25}
+.celda-cat small{color:var(--suave)}
+.celda-cat.vacia{border-style:dashed; color:var(--tenue); align-items:center; justify-content:center}
+.nivel-esc.resaltada{outline:2px solid var(--acento); outline-offset:2px}
+.eq-fila.pendiente-envio{opacity:.8; border-style:dashed}
+
+/* Ventana flotante de texto largo (descripción del INC) */
+.hoja.ventana{display:flex; flex-direction:column; max-height:min(82vh, 720px); overflow:hidden}
+.ventana-cab{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px}
+.ventana-cab h3{margin:0}
+.ventana-cab small{display:block; margin-top:4px; color:var(--tenue); font-size:13px}
+.ventana-texto{flex:1; min-height:0; overflow-y:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:15px; line-height:1.55;
+  padding:12px; border:1px solid var(--linea); border-radius:var(--radio-sm); background:var(--panel2); outline:none}
+.ventana-texto:focus-visible{border-color:var(--acento)}
+.hoja.ventana .btns{margin-top:12px}
+/* Vista previa de la descripción en el Resumen del INC (3 líneas) */
+.desc-previa{overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; margin:0}

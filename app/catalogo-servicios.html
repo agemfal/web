@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Servicios</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* SERVICIOS — catálogo de servicios por red (Red Fija, Red Móvil…) que muestra el tablero.
+   El Administrador agrega servicios, los edita o los saca del tablero (desactivar). Un servicio desactivado
+   se puede eliminar si no tiene INC abiertos ni en el historial. Los equipos de cada servicio se eligen en Equipos. */
+let datos = null, error = null, verInactivos = false;
+const ICONO_TXT = { red:"Red / acceso", tv:"Televisión", play:"Video", telefono:"Teléfono / voz", antena:"Antena / móvil", mensaje:"Mensajería", server:"Servidor", grafico:"Gráfico" };
+const NUEVA = "__nueva";
+
+async function cargar(){
+  const r = await App.api("GET", "/servicios");
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  datos = r.cuerpo.ok ? r.cuerpo.data : null;
+  App.redibujar();
+}
+
+async function formulario(s){
+  const redes = datos.redes.length ? datos.redes : ["Red Fija", "Red Móvil"];
+  const f = await App.formulario({ titulo: s ? `Editar ${s.nombre}` : "Agregar servicio", enviar: s ? "Guardar" : "Agregar", campos:[
+    { id:"nombre", etiqueta:"Nombre", requerido:true, valor:s?.nombre || "", ayuda:"Ej.: Voice IP" },
+    { id:"red", etiqueta:"Red", tipo:"select", valor:s?.red || redes[0], opciones:[...redes.map(r => ({ valor:r, texto:r })), { valor:NUEVA, texto:"Otra red…" }] },
+    { id:"red_nueva", etiqueta:"Nombre de la red nueva (solo si elegiste Otra red)", valor:"", ayuda:"Ej.: Empresas" },
+    { id:"grupo", etiqueta:"Grupo (opcional, texto chico debajo del nombre)", valor:s?.grupo || "", ayuda:"Ej.: Voz" },
+    { id:"icono", etiqueta:"Ícono", tipo:"select", valor:s?.icono || "server", opciones:datos.iconos.map(i => ({ valor:i, texto:ICONO_TXT[i] || i })) },
+    ...(s ? [] : [{ tipo:"nota", texto:"Queda asignado solo al equipo de su red (Red Fija → VOC, Red Móvil → SOC). Otros equipos se suman en Equipos → el equipo → Servicios." }]) ] });
+  if (!f) return;
+  const red = f.red === NUEVA ? f.red_nueva : f.red;
+  if (!red) return App.aviso("Escribí el nombre de la red nueva", 3500);
+  const body = { nombre:f.nombre, red, grupo:f.grupo, icono:f.icono };
+  if (s) body.id = s.id;
+  const r = await App.enviar("POST", "/servicios", body, s ? "Servicio guardado" : "Servicio agregado");
+  if (r?.asignado_a) setTimeout(() => App.aviso(`Lo atiende ${r.asignado_a} (equipo de la red)`, 4000), 2700);
+  if (r) cargar();
+}
+
+async function cambiarEstado(s){
+  const sacar = s.activo;
+  if (sacar && !confirm(`¿Sacar "${s.nombre}" del tablero?${s.inc_abiertos ? `\nTiene ${s.inc_abiertos} INC abierto(s): siguen abiertos, pero el servicio deja de verse en el tablero.` : ""}\nSe puede volver a activar.`)) return;
+  if (await App.enviar("POST", "/servicios", { id:s.id, activo:!sacar }, sacar ? "Servicio desactivado" : "Servicio activado")) cargar();
+}
+
+async function eliminar(s){
+  if (!confirm(`¿Eliminar "${s.nombre}" para siempre?\nSe quita también de los equipos que lo atendían. Si tiene INC en el historial no se puede: queda desactivado.`)) return;
+  if (await App.enviar("POST", "/servicios", { id:s.id, eliminar:true }, "Servicio eliminado")) cargar();
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Servicios",
+  render: () => {
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando…", "reloj") });
+    const ed = datos.puede_editar;
+    const inactivos = datos.servicios.filter(s => !s.activo).length;
+    const visibles = datos.servicios.filter(s => s.activo || verInactivos);
+    const redes = [...new Set(visibles.map(s => s.red))];
+    const fila = s => `<li class="${s.activo ? "ok" : "info"}">
+        <span class="ic">${icono(s.icono)}</span>
+        <span class="cuerpo"><b>${esc(s.nombre)}</b><small>${esc([s.activo ? "" : "Desactivado", s.grupo, s.equipos.length ? s.equipos.map(t => t.codigo).join(", ") : "sin equipo asignado",
+          s.inc_abiertos ? s.inc_abiertos + " INC abierto(s)" : ""].filter(Boolean).join(" · "))}</small></span>
+        <span class="lado" style="display:flex;gap:6px;align-items:center">
+          ${!ed ? "" : s.activo ? `<button class="boton chico" data-accion="sv:editar:${esc(s.id)}">Editar</button>
+          <button class="boton chico" data-accion="sv:estado:${esc(s.id)}">Sacar</button>`
+          : `<button class="boton chico" data-accion="sv:estado:${esc(s.id)}">Activar</button>
+          <button class="boton chico peligro" data-accion="sv:eliminar:${esc(s.id)}">Eliminar</button>`}</span>
+      </li>`;
+    return `
+      ${ed ? `<div class="btns" style="margin-bottom:12px"><button class="boton primario" data-accion="sv:nuevo">${icono("mas")} Agregar servicio</button></div>` : ""}
+      ${redes.length ? redes.map(r => C.tarjeta({ titulo:r, iconoTit:"red", cuerpo:`
+        <p class="cambio" style="margin:0 0 8px">${datos.equipo_por_red?.[r] ? `Todos sus INC van a <b>${esc(datos.equipo_por_red[r].nombre)}</b>, también los servicios que se agreguen.` : "Sin equipo automático: elegí el equipo de cada servicio en Equipos."}</p>
+        <ul class="lista">${visibles.filter(s => s.red === r).map(fila).join("")}</ul>` })).join("")
+        : C.tarjeta({ cuerpo:C.vacio("No hay servicios activos", "info") })}
+      ${inactivos ? `<div class="btns"><button class="boton" data-accion="sv:inactivos">${verInactivos ? "Ocultar" : "Ver"} desactivados (${inactivos})</button></div>` : ""}
+      ${ed ? "" : `<p class="cambio">Solo el Administrador puede agregar o cambiar servicios.</p>`}`;
+  },
+  alMontar: () => { if (!datos && !error) cargar(); },
+  accion: id => {
+    const [p, a, ...resto] = id.split(":");
+    if (p !== "sv") return;
+    const s = datos?.servicios.find(x => x.id === resto.join(":"));
+    if (a === "nuevo") formulario(null);
+    if (a === "editar" && s) formulario(s);
+    if (a === "estado" && s) cambiarEstado(s);
+    if (a === "eliminar" && s) eliminar(s);
+    if (a === "inactivos") { verInactivos = !verInactivos; App.redibujar(); }
+    return true;
+  }
+});
+</script>
+</body>
+</html>

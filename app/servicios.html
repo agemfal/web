@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Servicios</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* SERVICIOS — cada servicio con sus INC asociados */
+let filtro = "todos";
+const marcado = new URLSearchParams(location.search).get("id");
+let yaDesplazo = false;
+
+/* Debate de cada INC (abrir o entrar). Qué se puede hacer lo dice el backend. */
+let debates = {}, errorDebates = null;
+async function cargarDebates(){
+  const r = await App.api("GET", "/debates");
+  const err = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  if (err !== errorDebates) { errorDebates = err; if (App.datos) App.redibujar(); }
+  if (!r.cuerpo.ok) return;
+  const nuevo = Object.fromEntries(r.cuerpo.data.incidentes.map(i => [i.inc, i]));
+  if (JSON.stringify(nuevo) !== JSON.stringify(debates)) { debates = nuevo; if (App.datos) App.redibujar(); }
+}
+function botonDebate(i){
+  const x = debates[i.inc];
+  if (x?.debate) return `<button class="boton chico" data-accion="deb:ver:${esc(x.debate.id)}">${icono("mensaje")}Abrir chat · ${x.debate.mensajes_total}${x.debate.no_leidos ? ` <span class="pastilla">${x.debate.no_leidos}</span>` : ""}</button>`;
+  if (x?.puede_abrir) return `<button class="boton chico primario" data-accion="deb:abrir:${esc(i.inc)}">${icono("mensaje")}Abrir chat</button>`;
+  return "";
+}
+// Fila de INC con el botón del debate debajo del título
+// Tarjeta de INC compacta (la misma de Inicio); si el backend todavía no respondió, la fila simple de siempre
+const filaIncConDebate = (d, i) => debates[i.inc] ? `<li class="sin-borde">${C.tarjetaInc(debates[i.inc], { nivel:1 })}</li>` : C.filaInc(d, i, false);
+async function abrirDebate(inc){
+  const r = await App.api("POST", "/debates", { inc });
+  if (r.cuerpo.ok) return location.href = "debate.html?id=" + encodeURIComponent(r.cuerpo.data.debate.id);
+  if (r.cuerpo.error.codigo === "DEBATE_YA_EXISTE") return location.href = "debate.html?id=" + encodeURIComponent(r.cuerpo.error.detalle.debate_id);
+  App.aviso(r.cuerpo.error.mensaje, 4000);
+}
+
+App.iniciar({
+  id: "servicios",
+  titulo: "Servicios",
+  render: d => {
+    const cuenta = e => d.servicios.filter(s => estadoServicio(d, s) === e).length;
+    const opciones = [["todos","Todos",d.servicios.length],["crit","Críticos",cuenta("crit")],["warn","Afectados",cuenta("warn")],["ok","OK",cuenta("ok")]];
+    const lista = ordenarServicios(d).filter(s => filtro === "todos" || estadoServicio(d, s) === filtro);
+
+    const tarjetas = lista.map(s => {
+      const e = estadoServicio(d, s), incs = incDe(d, s);
+      return `<section class="card ${s.id === marcado ? "marcado-card" : ""}" id="s-${esc(s.id)}" style="${s.id === marcado ? "border-color:var(--acento)" : ""}">
+        <div class="fila-serv ${e}" style="border:0;padding:0 0 0 10px;min-height:0;background:none">
+          <span class="ic">${icono(s.icono)}</span>
+          <span class="cuerpo"><b>${esc(s.nombre)}</b><small>${esc([s.red, s.grupo].filter(Boolean).join(" · "))}</small></span>
+          ${C.chip(e, textoEstado(s, e))}
+        </div>
+        <div style="margin-top:10px">${esDisp(s)
+          ? `<ul class="lista"><li class="${e}"><span class="cuerpo"><b class="num" style="color:var(--c)">${s.disponibilidad.toFixed(1)}% disponibilidad</b><small>${esc(s.detalle || "Sin novedades")}</small></span>${C.barra((s.disponibilidad - 90) * 10)}</li></ul>`
+          : incs.length
+            ? `<ul class="lista">${incs.map(i => filaIncConDebate(d, i)).join("")}</ul>`
+            : `<p style="margin:0;color:var(--suave);font-size:13px">Sin incidentes asociados</p>`}</div>
+      </section>`;
+    }).join("");
+
+    const avisoDebates = errorDebates
+      ? C.tarjeta({ clase:"crit", cuerpo:C.vacio("Debates no disponibles: " + errorDebates + ". Revisá que rbac-demo.js esté junto a app.js y recargá con Ctrl+F5.", "alerta") }) : "";
+    return `${C.subnavInicio("servicios")}${avisoDebates}
+      <div class="filtros">${opciones.map(([id,txt,n]) =>
+        `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}">${txt} <span class="num">${n}</span></button>`).join("")}</div>
+      ${tarjetas || C.tarjeta({ cuerpo: C.vacio("Ningún servicio en este estado") })}`;
+  },
+  alMontar: () => {
+    if (marcado && !yaDesplazo) { document.getElementById("s-" + marcado)?.scrollIntoView({ block:"center" }); yaDesplazo = true; }
+  },
+  accion: id => {
+    if (id.startsWith("f:")) { filtro = id.slice(2); App.redibujar(); return true; }
+    if (id.startsWith("deb:ver:")) { location.href = "debate.html?id=" + encodeURIComponent(id.slice(8)); return true; }
+    if (id.startsWith("deb:abrir:")) { abrirDebate(id.slice(10)); return true; }
+  }
+});
+cargarDebates();
+setInterval(() => { if (!document.hidden) cargarDebates(); }, 5000);
+</script>
+</body>
+</html>

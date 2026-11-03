@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Equipos</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<!-- Demo Local: backend simulado del módulo (en producción responde n8n con el mismo JSON) -->
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* EQUIPOS — responsable, integrantes, horario, servicios, productos y matriz.
+   La pantalla solo dibuja: qué se puede hacer lo dice el backend en "acciones". */
+let datos = null, usuarios = [], detalle = null, error = null, cargando = false;
+const CLASE = { activo:"ok", inactivo:"warn" };
+const DIAS = ["", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+async function recargar(){
+  if (cargando) return;
+  cargando = true;
+  const [e, u] = await Promise.all([App.api("GET", "/equipos"), App.api("GET", "/usuarios")]);
+  error = e.cuerpo.ok ? null : e.cuerpo.error.mensaje;
+  datos = e.cuerpo.ok ? e.cuerpo.data : null;
+  usuarios = u.cuerpo.ok ? u.cuerpo.data.usuarios : [];
+  if (detalle) { const d = await App.api("GET", "/equipos/" + detalle.id); detalle = d.cuerpo.ok ? d.cuerpo.data.equipo : null; }
+  cargando = false;
+  App.redibujar();
+}
+async function ver(id){
+  const d = await App.api("GET", "/equipos/" + id);
+  if (!d.cuerpo.ok) return App.aviso(d.cuerpo.error.mensaje);
+  detalle = d.cuerpo.data.equipo; App.redibujar(); scrollTo({ top:0, behavior:"smooth" });
+}
+
+const horarioTxt = h => !h ? "—" : h.modalidad === "24x7" ? "24 × 7"
+  : h.franjas.map(f => `${f.dias.map(d => DIAS[d]).join(", ")} ${f.desde}–${f.hasta}`).join(" · ");
+const destinoTxt = d => d.tipo === "rol" ? (ROLES_TXT[d.rol] || d.rol) : (d.nombre || "usuario");
+
+function liEquipo(t){
+  return `<li class="${CLASE[t.estado]} clic" data-accion="e:ver:${esc(t.id)}">
+    <span class="ic">${icono("red")}</span>
+    <span class="cuerpo"><b>${esc(t.nombre)}</b><small>${esc(t.codigo)} · ${esc(t.responsable?.nombre || "sin responsable")} · ${t.totales.integrantes} integrantes</small></span>
+    ${C.chip(CLASE[t.estado], t.estado_txt)}
+  </li>`;
+}
+
+function fichaEquipo(t){
+  const fila = (k, v) => `<dt>${esc(k)}</dt><dd>${v}</dd>`;
+  const puedeIntegrantes = t.acciones.some(a => a.accion === "gestionar_integrantes");
+  const integrantes = t.integrantes.map(i => `<li class="${i.es_responsable ? "ok" : "info"}">
+      <span class="ic">${icono("usuario")}</span>
+      <span class="cuerpo"><b>${esc(i.nombre)}</b><small>${esc(ROLES_TXT[i.rol] || i.rol)}${i.es_responsable ? " · responsable" : ""}${i.estado !== "activo" ? " · " + esc(i.estado) : ""}</small></span>
+      ${puedeIntegrantes && !i.es_responsable ? `<button class="boton chico peligro" data-accion="e:remover:${esc(i.id)}">Quitar</button>` : ""}
+    </li>`).join("");
+  return C.tarjeta({ cuerpo: `
+    <div class="cab-ficha"><span class="ic">${icono("red")}</span><b>${esc(t.nombre)}</b>${C.chip(CLASE[t.estado], t.estado_txt)}</div>
+    <dl class="ficha">
+      ${fila("Código", esc(t.codigo))}
+      ${t.descripcion ? fila("Descripción", esc(t.descripcion)) : ""}
+      ${fila("Responsable", esc(t.responsable?.nombre || "—"))}
+      ${fila("Horario", esc(horarioTxt(t.horario)) + (t.en_horario === false ? " · fuera de horario" : ""))}
+      ${fila("Servicios", t.servicios.length ? `<span class="etiquetas">${t.servicios.map(s => C.chip("info", s.nombre)).join("")}</span>` : "—")}
+      ${fila("Productos", t.productos.length ? `<span class="etiquetas">${t.productos.map(p => C.chip("info", p.nombre)).join("")}</span>` : "—")}
+    </dl>
+    <div class="sub">Integrantes (${t.totales.integrantes})</div>
+    <ul class="lista">${integrantes}</ul>
+    <div class="sub">Matriz de escalamiento${t.matriz ? ` · v${t.matriz.version}` : ""}</div>
+    ${t.matriz ? `<ul class="lista">${t.matriz.niveles.map(n => `<li class="info">
+      <span class="pos">N${n.nivel}</span>
+      <span class="cuerpo"><b>${esc(n.destinos.map(destinoTxt).join(", "))}</b><small>espera ${n.espera_min} min · ${esc(n.canales.join(", "))}${n.horario ? " · solo " + esc(horarioTxt(n.horario)) : ""}${n.alcance_ahora ? ` · ahora ${n.alcance_ahora.en_franja ? `${n.alcance_ahora.disponibles}/${n.alcance_ahora.personas} disponibles` : "fuera de franja"}` : ""}</small></span></li>`).join("")}</ul>`
+      : C.vacio("Sin matriz activa", "alerta")}
+    <div class="btns">${t.acciones.map(a =>
+      `<button class="boton chico ${a.accion === "desactivar" ? "peligro" : ""}" data-accion="e:act:${a.accion}">${esc(a.etiqueta)}</button>`).join("")}
+      <button class="boton chico" data-accion="e:cerrar">Cerrar</button></div>` });
+}
+
+/* ---------- Formularios ---------- */
+const camposHorario = h => [
+  { id:"modalidad", etiqueta:"Horario de atención", tipo:"select", valor:h?.modalidad === "franjas" ? "franjas" : "24x7",
+    opciones:[{ valor:"24x7", texto:"24 × 7" }, { valor:"franjas", texto:"Lunes a viernes, en una franja" }] },
+  { id:"desde", etiqueta:"Desde (solo franja)", tipo:"time", valor:h?.franjas?.[0]?.desde || "08:00" },
+  { id:"hasta", etiqueta:"Hasta (solo franja)", tipo:"time", valor:h?.franjas?.[0]?.hasta || "20:00" }
+];
+const armarHorario = f => f.modalidad === "24x7" ? { modalidad:"24x7", zona_horaria:"America/Argentina/Buenos_Aires" }
+  : { modalidad:"franjas", zona_horaria:"America/Argentina/Buenos_Aires", franjas:[{ dias:[1, 2, 3, 4, 5], desde:f.desde, hasta:f.hasta }] };
+const jefes = () => usuarios.filter(u => u.estado === "activo" && ["ADMIN", "GESTOR"].includes(u.rol.codigo)).map(u => ({ valor:u.id, texto:`${u.nombre} (${u.rol.nombre})` }));
+const catalogo = (tipo, valor = []) => ({ id:tipo, etiqueta:tipo === "servicios" ? "Servicios" : "Productos", tipo:"multi", valor,
+  opciones:(datos.catalogos?.[tipo] || []).map(x => ({ valor:x.id, texto:x.nombre + (x.red ? ` · ${x.red}` : "") })) });
+
+async function accionEquipo(accion){
+  const t = detalle, base = "/equipos/" + t.id;
+  let f, ok = null;
+  if (accion === "modificar") {
+    f = await App.formulario({ titulo:`Editar ${t.nombre}`, campos:[
+      { id:"nombre", etiqueta:"Nombre", valor:t.nombre, requerido:true },
+      { id:"descripcion", etiqueta:"Descripción", tipo:"textarea", valor:t.descripcion || "" }, ...camposHorario(t.horario) ] });
+    if (f) ok = await App.enviar("PATCH", base, { nombre:f.nombre, descripcion:f.descripcion, horario:armarHorario(f), version:t.version }, "Equipo actualizado");
+  }
+  if (accion === "gestionar_integrantes") {
+    const ya = new Set(t.integrantes.map(i => i.id));
+    const opciones = usuarios.filter(u => u.estado !== "baja" && !ya.has(u.id)).map(u => ({ valor:u.id, texto:`${u.nombre} (${u.rol.nombre})` }));
+    f = await App.formulario({ titulo:`Agregar integrantes a ${t.nombre}`, enviar:"Agregar", campos:[
+      { id:"user_ids", etiqueta:"Usuarios", tipo:"multi", opciones }, JUSTIFICACION ] });
+    if (f && !f.user_ids.length) return App.aviso("Elegí al menos un usuario");
+    if (f) ok = await App.enviar("POST", base + "/integrantes", f, "Integrantes agregados");
+  }
+  if (accion === "cambiar_responsable") {
+    f = await App.formulario({ titulo:`Responsable de ${t.nombre}`, enviar:"Designar", campos:[
+      { id:"user_id", etiqueta:"Nuevo responsable", tipo:"select", opciones:jefes(), valor:t.responsable?.id },
+      { tipo:"nota", texto:"El responsable actual sigue como integrante." }, JUSTIFICACION ] });
+    if (f) ok = await App.enviar("POST", base + "/responsable", f, "Responsable actualizado");
+  }
+  if (accion === "catalogo") {
+    f = await App.formulario({ titulo:`Servicios y productos de ${t.nombre}`, campos:[
+      catalogo("servicios", t.servicios.map(s => s.id)), catalogo("productos", t.productos.map(p => p.id)) ] });
+    if (f) ok = await App.enviar("PUT", base + "/catalogo", f, "Catálogo actualizado");
+  }
+  if (accion === "editar_matriz") return location.href = "matrices.html?equipo=" + encodeURIComponent(t.id);
+  if (["desactivar", "activar"].includes(accion)) {
+    f = await App.formulario({ titulo:`${accion === "activar" ? "Activar" : "Desactivar"} ${t.nombre}`, enviar:"Confirmar", peligro:accion === "desactivar",
+      campos:[ ...(accion === "desactivar" ? [{ tipo:"nota", texto:"No debe tener incidentes abiertos ni dejar servicios o integrantes sin equipo." }] : []), JUSTIFICACION ] });
+    if (f) ok = await App.enviar("POST", base + "/estado", { estado:accion === "activar" ? "activo" : "inactivo", justificacion:f.justificacion }, "Estado actualizado");
+  }
+  if (ok) recargar();
+}
+
+async function remover(userId){
+  const i = detalle.integrantes.find(x => x.id === userId);
+  const f = await App.formulario({ titulo:`Quitar a ${i.nombre} de ${detalle.nombre}`, enviar:"Quitar", peligro:true, campos:[JUSTIFICACION] });
+  if (!f) return;
+  const ok = await App.enviar("POST", `/equipos/${detalle.id}/integrantes/${userId}/remover`, f, "Integrante removido");
+  if (ok) recargar();
+}
+
+async function nuevo(){
+  const f = await App.formulario({ titulo:"Nuevo equipo", enviar:"Crear equipo", campos:[
+    { id:"codigo", etiqueta:"Código", ayuda:"Ej.: NOC-CORE", requerido:true },
+    { id:"nombre", etiqueta:"Nombre", requerido:true },
+    { id:"descripcion", etiqueta:"Descripción", tipo:"textarea" },
+    { id:"responsable_id", etiqueta:"Responsable", tipo:"select", opciones:jefes() },
+    ...camposHorario(null), catalogo("servicios"), catalogo("productos"),
+    { tipo:"nota", texto:"Se crea con una matriz inicial: Operadores a los 5 min (app) y Gestores a los 15 min (app y correo). Después la podés cambiar en Matrices de escalamiento." } ] });
+  if (!f) return;
+  const body = { codigo:f.codigo, nombre:f.nombre, descripcion:f.descripcion, responsable_id:f.responsable_id, horario:armarHorario(f),
+    servicios:f.servicios, productos:f.productos, integrantes:[],
+    matriz:{ niveles:[ { espera_min:5, canales:["app"], destinos:[{ tipo:"rol", rol:"OPERADOR" }] },
+                       { espera_min:15, canales:["app", "email"], destinos:[{ tipo:"rol", rol:"GESTOR" }] } ] } };
+  const ok = await App.enviar("POST", "/equipos", body, "Equipo creado");
+  if (ok) { detalle = ok.equipo; recargar(); }
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Equipos",
+  render: () => {
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando equipos…", "reloj") });
+    return `
+      ${detalle ? fichaEquipo(detalle) : ""}
+      ${datos.puede_crear ? `<button class="boton primario" data-accion="e:nuevo">${icono("mas")} Nuevo equipo</button>` : ""}
+      ${datos.equipos.filter(t => t.puede_editar && t.estado === "activo").length > 1 ? `<button class="boton" data-accion="e:matrices">${icono("alerta")} Matrices de escalamiento · editar varias o todas</button>` : ""}
+      ${C.tarjeta({ titulo: App.rol === "ADMIN" ? "Todos los equipos" : "Mis equipos", iconoTit:"red",
+        cuerpo: datos.equipos.length ? `<ul class="lista">${datos.equipos.map(liEquipo).join("")}</ul>` : C.vacio("No pertenecés a ningún equipo") })}`;
+  },
+  alMontar: () => { if (!datos && !error) recargar(); },
+  accion: id => {
+    const [p, a, x] = id.split(":");
+    if (p !== "e") return;
+    if (a === "ver") ver(x);
+    else if (a === "cerrar") { detalle = null; App.redibujar(); }
+    else if (a === "act") accionEquipo(x);
+    else if (a === "remover") remover(x);
+    else if (a === "nuevo") nuevo();
+    else if (a === "matrices") location.href = "matrices.html?modo=todos";
+    return true;
+  }
+});
+</script>
+</body>
+</html>

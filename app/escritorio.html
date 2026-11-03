@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Inicio</title>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=30"></script>
+<script src="app.js"></script>
+<script>
+/* INICIO — salud de la red a nivel servicio (estado por INC asociados) */
+
+/* Debates de los INC: resumen para entrar rápido (lo calcula el backend) */
+let debates = null;
+async function cargarDebates(){
+  const r = await App.api("GET", "/debates");
+  const nuevo = r.cuerpo.ok ? r.cuerpo.data : { error:r.cuerpo.error.mensaje };
+  if (JSON.stringify(nuevo) !== JSON.stringify(debates)) { debates = nuevo; if (App.datos) App.redibujar(); }
+}
+// INC abiertos de un servicio, bajo su fila: una fila compacta por INC (categoría, SLA y Abrir). El detalle está en la tarjeta y en la ficha.
+function debatesDe(sid){
+  if (!debates || debates.error) return "";
+  const lista = debates.incidentes.filter(i => i.servicios.includes(sid));
+  return lista.length ? `<div class="incs-serv">${lista.map(i => C.tarjetaInc(i, { nivel:1 })).join("")}</div>` : "";
+}
+// Lo que espera por vos: INC con un equipo tuyo sin tomar (con el botón Tomar)
+function atencion(){
+  if (!debates || debates.error) return "";
+  const lista = debates.incidentes.filter(i => i.equipos.some(e => e.estado === "pendiente" && (e.acciones || []).some(a => a.accion === "tomar")));
+  if (App.rol === "LECTURA") return "";
+  return `<div class="seccion-tit"><h2>Requiere tu atención</h2><small>${lista.length ? `${lista.length} sin tomar en tus equipos` : ""}</small></div>
+    ${lista.length ? `<div class="lista-tinc">${lista.map(i => C.tarjetaInc(i)).join("")}</div>`
+      : `<div class="vacio-suave">${icono("check")}Nada pendiente en tus equipos.</div>`}`;
+}
+
+App.iniciar({
+  id: "inicio",
+  titulo: "Salud de la red",
+  render: d => {
+    const s = saludRed(d);
+
+    // Estado general: rojo = algún INC Grave · amarillo = SLA en riesgo · verde = ninguna
+    const si = v => v === true || v === 1 || /^(s[ií]|true|1)$/i.test(String(v ?? "").trim());
+    const graves = d.incidentes.filter(i => mayorInc(i) === "si").length;          // Grave = Sí (P1, P4…)
+    const posibles = d.incidentes.filter(i => mayorInc(i) === "posible").length;   // Grave = Posible (P2, P5…)
+    // SLA y escalamientos: los calcula el backend (GET /debates → resumen); si no está, se usan los datos del tablero
+    const res = debates && !debates.error ? debates.resumen : null;
+    const slaVencidos = res ? res.sla_vencidos : 0;
+    const slaRiesgo = res ? res.sla_riesgo : d.incidentes.filter(i => si(i.slaRiesgo)).length;
+    const escalamientos = res ? res.escalados : d.incidentes.filter(i => si(i.escalado)).length;
+    const general = graves    ? { clase:"crit", titulo:"Incidente mayor activo" }
+                  : posibles  ? { clase:"warn", titulo:"Posible incidente mayor" }
+                  : slaVencidos || slaRiesgo ? { clase:"warn", titulo:"Riesgo operacional" }
+                  :             { clase:"ok",   titulo:"Red estable" };
+    // Indicadores: cada uno abre Incidentes con ese filtro; los ceros se atenúan
+    const kpi = (titulo, n, clase, ic, filtro) => `<a class="kpi ${n ? clase : "cero"}" href="incidentes.html?filtro=${filtro}" aria-label="${n} ${titulo}: ver en Incidentes">
+      <span class="k-tit">${icono(ic)}${esc(titulo)}</span><span class="k-num">${n}</span></a>`;
+    const resumen = `${s.criticos} críticos | ${slaVencidos} SLA vencidos | ${slaRiesgo} SLA en riesgo | ${escalamientos} escalamientos`;
+
+    // Agrupa los servicios por red, en orden fijo: Red Fija → Red Móvil → Empresas (otras al final)
+    const ORDEN_REDES = ["Red Fija", "Red Móvil", "Empresas"];
+    const pos = r => (ORDEN_REDES.indexOf(r) + 1) || 99;
+    const redes = [...new Set(d.servicios.map(x => x.red || "Servicios"))].sort((a, b) => pos(a) - pos(b));
+    const grupos = redes.map(red => {
+      const servs = ordenarServicios(d).filter(x => (x.red || "Servicios") === red);
+      const incsRed = new Set(servs.flatMap(x => incDe(d, x).map(i => i.inc))).size;
+      const lado = servs.every(esDisp)
+        ? "Por disponibilidad"
+        : `${incsRed} INC abierto${incsRed !== 1 ? "s" : ""}`;
+      return `<div class="grupo-red">
+        <div class="titulo-red"><span>${esc(red)}</span><span>${lado}</span></div>
+        ${servs.map(x => C.filaServicio(d, x) + debatesDe(x.id)).join("")}
+      </div>`;
+    }).join("");
+
+    return `
+      ${C.subnavInicio("inicio")}
+      <section class="card salud ${general.clase}" role="status">
+        ${C.anillo(s.ok, s.total, "OK")}
+        <div class="txt"><small>Estado general</small><b>${general.titulo}</b><div class="resumen solo-lector">${resumen}</div></div>
+      </section>
+      <div class="kpis">
+        ${kpi("Críticos", s.criticos, "crit", "alerta", "crit")}
+        ${kpi("SLA vencidos", slaVencidos, "crit", "reloj", "vencidos")}
+        ${kpi("SLA en riesgo", slaRiesgo, "warn", "reloj", "riesgo")}
+        ${kpi("Escalando", escalamientos, "warn", "subir", "escalando")}
+      </div>
+      ${atencion()}
+      <div class="seccion-tit"><h2>Servicios</h2><small>${s.ok} de ${s.total} OK</small></div>
+      ${grupos}`;
+  },
+  alCambiarInc: () => cargarDebates(),
+  accion: id => {
+    if (id.startsWith("deb:")) { location.href = "debate.html?id=" + encodeURIComponent(id.slice(4)); return true; }
+  }
+});
+cargarDebates();
+setInterval(() => { if (!document.hidden) cargarDebates(); }, 5000);
+</script>
+</body>
+</html>
