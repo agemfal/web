@@ -79,8 +79,10 @@ const DATOS_DEMO = {
         "Contactos: guardia de planta externa interno 4410 · jefe de turno NOC interno 4400." },
     { inc:"INC000412355", servicios:["television"],  prioridad:5, grave:"posible", titulo:"Pixelado en canales HD",           inicio:minAtras(40),
       descripcion:"Clientes reportan pixelado en los canales HD del paquete premium. Afecta solo a decodificadores modelo X200." },
-    { inc:"INC000412360", servicios:["television"],  prioridad:6, grave:"no", titulo:"Guía de programación desactualizada", inicio:minAtras(15) },
-    { inc:"INC000412371", servicios:["voz-movil"], prioridad:2, grave:"posible", titulo:"Llamadas cortadas zona Norte", inicio:minAtras(25), afectados:1200 }
+    { inc:"INC000412360", servicios:["television"],  prioridad:6, grave:"no", titulo:"Guía de programación desactualizada", inicio:minAtras(15),
+      descripcion:"La guía de programación (EPG) de los decodificadores no muestra la grilla de hoy.\n\nCausa probable: la carga diaria desde el proveedor de contenidos (04:00) no se completó.\n\nImpacto: los clientes ven la guía vacía; la reproducción en vivo funciona con normalidad.\n\nAcción: reprocesar la carga manual con el proveedor y validar en un decodificador de prueba." },
+    { inc:"INC000412371", servicios:["voz-movil"], prioridad:2, grave:"posible", titulo:"Llamadas cortadas zona Norte", inicio:minAtras(25), afectados:1200,
+      descripcion:"Se cortan las llamadas de voz (VoLTE) a los 30–60 segundos en las celdas de la zona Norte.\n\nDiagnóstico inicial: el corte se concentra en el nodo de core de voz IMS 2; el nodo IMS 1 no presenta fallas.\n\nImpacto: unos 1200 clientes con llamadas entrecortadas o que no se completan.\n\nAcción: derivar el tráfico al nodo IMS 1 y revisar la sesión SIP con el proveedor de interconexión." }
   ]
 };
 
