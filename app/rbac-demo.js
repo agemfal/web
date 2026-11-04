@@ -496,7 +496,7 @@ const ReglasRBAC = (() => {
       { datos:{ solicitud_id:solicitudId } });
     membs.forEach(m => k.aud("EQUIPO_INTEGRANTE_AGREGADO", "team_member", m.id, m.team_id,
       { antes:null, despues:{ user_id:id, usuario:d.nombre, es_responsable:false } }));
-    k.plan.correos.push({ user_id:id, para:d.email, asunto:"Tu acceso al NOC", requiere_clave:!d.clave,
+    k.plan.correos.push({ user_id:id, para:d.email, asunto:"Tu acceso a Assurance Center", requiere_clave:!d.clave,
       texto:`Hola ${d.nombre}:\n\nSe creó tu usuario "${d.username}" con rol ${rolDef(k.raw, d.rol)?.nombre || d.rol}.\n` +
         (d.clave ? "La clave inicial te la comunica el Administrador; vas a tener que cambiarla al ingresar.\n"
                  : `Clave temporal: {{clave}}\nVence en ${k.plan.clave_horas} horas y vas a tener que cambiarla al ingresar.\n`) });
@@ -655,7 +655,7 @@ const ReglasRBAC = (() => {
     k.plan.sesiones_revocar.push(u.id);
     k.audEquipos("USUARIO_CLAVE_RESETEADA", "usuario", u.id, membresias(raw, u.id).map(m => m.team_id),
       { antes:null, despues:{ debe_cambiar_clave:true } });
-    k.plan.correos.push({ user_id:u.id, para:u.email, asunto:"Nueva clave temporal del NOC", requiere_clave:true,
+    k.plan.correos.push({ user_id:u.id, para:u.email, asunto:"Nueva clave temporal de Assurance Center", requiere_clave:true,
       texto:`Hola ${u.nombre}:\n\nSe generó una clave temporal para "${u.username}": {{clave}}\nVence en ${k.plan.clave_horas} horas y vas a tener que cambiarla al ingresar.\n` });
     return k.exito(200, { tipo:"usuario", id:u.id });
   }
@@ -1903,7 +1903,7 @@ const ReglasRBAC = (() => {
         const titulo = `${i.inc} · ${nombreCat(raw, i.prioridad)} · Escalamiento nivel ${n.nivel} · ${t.nombre}`;
         const cuerpo = `${i.titulo}. Nadie lo tomó todavía: tocá Tomar para detener el escalamiento.`;
         // Lo que dice la llamada (texto a voz en n8n). Con el 1 se toma el INC, igual que con el botón Tomar.
-        const guion = `Escalamiento del NOC. Incidente ${i.inc.replace(/^INC0*/, "")}, ${nombreCat(raw, i.prioridad)}, equipo ${t.nombre}. ` +
+        const guion = `Escalamiento de Assurance Center. Incidente ${i.inc.replace(/^INC0*/, "")}, ${nombreCat(raw, i.prioridad)}, equipo ${t.nombre}. ` +
           `${i.titulo}. Nadie lo tomó todavía. Presioná 1 para tomarlo o cortá para seguir el escalamiento.`;
         const silenciados = a.en_franja ? a.personas.filter(u => !a.disponibles.includes(u)) : [];
         a.disponibles.forEach(u => { const cs = canalesEfectivos(raw, u, n); cs.forEach(canal =>
@@ -2568,7 +2568,7 @@ const DATOS_DEMO_RBAC = (() => {
       ...Object.entries(ASIGNACION).flatMap(([rol, s]) => s.trim().split(/\s+/).map(x => { const [permiso, a] = x.split(":"); return { rol, permiso, alcance:ALC[a] }; }))
     ],
     usuarios: [
-      usuario(1, "admin", "Admin NOC", "ADMIN"), usuario(2, "ana", "Ana Gestora", "GESTOR"), usuario(3, "bruno", "Bruno Operador", "OPERADOR"),
+      usuario(1, "admin", "Administrador", "ADMIN"), usuario(2, "ana", "Ana Gestora", "GESTOR"), usuario(3, "bruno", "Bruno Operador", "OPERADOR"),
       usuario(4, "carla", "Carla Lectura", "LECTURA"), usuario(5, "diego", "Diego Gestor", "GESTOR"), usuario(7, "martin.rios", "Martín Ríos", "OPERADOR")
     ],
     equipos: [ equipo(1, "VOC", "VOC · Red Fija"), equipo(2, "IPTV", "Plataforma IPTV"), equipo(3, "SOC", "SOC · Red Móvil") ],

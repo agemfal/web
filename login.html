@@ -33,14 +33,16 @@
 <script src="rbac-demo.js?v=31"></script>
 <script src="app.js"></script>
 <script>
-/* INGRESO — valida usuario y clave contra n8n (POST /auth/login).
-   La clave puede ser la propia del NOC o la de la empresa (directorio LDAP): lo decide n8n según el usuario.
-   Si la clave es temporal, pide cambiarla antes de entrar (POST /me/clave). */
+/* INGRESO
+   · Con código (lo normal): usuario → POST /auth/codigo → llega un código de 6 dígitos al correo de la empresa
+     (lo manda el n8n de la empresa; el NOC no conoce el correo) → POST /auth/login { usuario, clave:<código> }.
+   · Con clave (cuentas de emergencia y la demo): POST /auth/login { usuario, clave }. Si es temporal, pide cambiarla (POST /me/clave). */
 const ss = sessionStorage, params = new URLSearchParams(location.search);
 const DESTINO = "escritorio.html";
 const local = CONFIG.MODO_DATOS === "local";
 let estado = params.get("cambio") === "1" && ss.getItem("token") ? "cambio" : "ingreso";
-let claveIngresada = "", ocupado = false;
+let modo = local ? "clave" : "codigo";            // "codigo" | "clave"
+let claveIngresada = "", ocupado = false, aviso = "", esperaHasta = 0, reloj = null;
 
 async function pedir(metodo, ruta, body, token){
   if (local) return SimuladorRBAC.atender({ metodo, ruta:"/api" + ruta, token, body });
@@ -70,7 +72,45 @@ const campoClave = (id, etiqueta, auto) => `<div class="campo"><label for="${id}
 
 function dibujar(error = ""){
   const caja = document.getElementById("caja");
-  if (estado === "ingreso") {
+  if (estado === "ingreso" && modo === "codigo") {
+    caja.innerHTML = `${marca("Gestión de incidentes y continuidad del servicio")}
+      <form id="fPedir" novalidate>
+        <label class="campo"><span>Usuario</span><input id="fUsuario" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(ss.getItem("usuario") || "")}"></label>
+        <p class="error" id="fError" role="alert">${esc(error)}</p>
+        <button class="boton primario" type="submit" ${ocupado ? "disabled" : ""}>${ocupado ? "Enviando…" : "Enviarme un código"}</button>
+      </form>
+      <p class="nota">Te llega un código a tu correo de la empresa. No hace falta clave.</p>
+      <p class="nota"><a href="#" id="fModo">Entrar con clave</a> (cuentas de emergencia)</p>`;
+    document.getElementById("fUsuario").focus();
+    document.getElementById("fPedir").onsubmit = ev => { ev.preventDefault(); pedirCodigo(); };
+    document.getElementById("fModo").onclick = ev => { ev.preventDefault(); modo = "clave"; dibujar(); };
+  } else if (estado === "codigo") {
+    const falta = Math.max(0, Math.ceil((esperaHasta - Date.now()) / 1000));
+    caja.innerHTML = `${marca("Revisá tu correo de la empresa")}
+      <form id="fCodigo" novalidate>
+        <p class="nota" style="margin:0 0 12px">${esc(aviso)}</p>
+        <label class="campo"><span>Código de 6 dígitos</span><input id="fCod" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+        <p class="error" id="fError" role="alert">${esc(error)}</p>
+        <button class="boton primario" type="submit" ${ocupado ? "disabled" : ""}>${ocupado ? "Ingresando…" : "Ingresar"}</button>
+      </form>
+      <p class="nota">¿No llegó? Puede tardar hasta un minuto.
+        <span id="fOtroZona"></span> <a href="#" id="fOtro">Usar otro usuario</a></p>`;
+    const c = document.getElementById("fCod");
+    c.oninput = () => { c.value = c.value.replace(/\D/g, "").slice(0, 6); if (c.value.length === 6 && !ocupado) ingresarCodigo(); };
+    c.focus();
+    document.getElementById("fCodigo").onsubmit = ev => { ev.preventDefault(); ingresarCodigo(); };
+    document.getElementById("fOtro").onclick = ev => { ev.preventDefault(); clearInterval(reloj); estado = "ingreso"; dibujar(); };
+    // Cuenta regresiva para pedir otro código: cambia solo ese texto (no borra lo que se está escribiendo)
+    const zona = document.getElementById("fOtroZona");
+    const tic = () => {
+      const s = Math.max(0, Math.ceil((esperaHasta - Date.now()) / 1000));
+      if (s) { zona.textContent = `Podés pedir otro en ${s} s.`; return; }
+      clearInterval(reloj);
+      zona.innerHTML = `<a href="#" id="fOtroCod">Pedir otro código</a>.`;
+      document.getElementById("fOtroCod").onclick = ev => { ev.preventDefault(); pedirCodigo(); };
+    };
+    clearInterval(reloj); tic(); if (falta) reloj = setInterval(tic, 1000);
+  } else if (estado === "ingreso") {
     caja.innerHTML = `${marca("Gestión de incidentes y continuidad del servicio")}
       <form id="fIngreso" novalidate>
         <label class="campo"><span>Usuario o correo</span><input id="fUsuario" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(ss.getItem("usuario") || "")}"></label>
@@ -78,12 +118,13 @@ function dibujar(error = ""){
         <p class="error" id="fError" role="alert">${esc(error)}</p>
         <button class="boton primario" type="submit" ${ocupado ? "disabled" : ""}>${ocupado ? "Ingresando…" : "Ingresar"}</button>
       </form>
-      <p class="nota">Si tu cuenta usa el usuario de la empresa, ingresá con la misma clave de tu PC.
-        ¿Olvidaste la clave? Pedile al Administrador del NOC una clave temporal.</p>
+      <p class="nota">Solo para cuentas de emergencia o que usan la clave de la empresa.
+        <a href="#" id="fModo">Entrar con un código por correo</a></p>
       ${local ? `<p class="nota"><b>Demo:</b> admin, ana, bruno o carla · clave <code>demo123</code>.</p>` : ""}`;
     const u = document.getElementById("fUsuario");
     (u.value ? document.getElementById("fClave") : u).focus();
     document.getElementById("fIngreso").onsubmit = ev => { ev.preventDefault(); ingresar(); };
+    document.getElementById("fModo").onclick = ev => { ev.preventDefault(); modo = "codigo"; dibujar(); };
   } else {
     caja.innerHTML = `${marca("Tenés que cambiar tu clave")}
       <form id="fCambio" novalidate>
@@ -116,9 +157,34 @@ function reglasClave(){
   document.getElementById("fReglas").innerHTML = reglas.map(([ok, t]) => `<li class="${ok && v ? "ok" : ""}">${ok && v ? "✓ " : ""}${t}</li>`).join("");
 }
 
+async function pedirCodigo(){
+  const campo = document.getElementById("fUsuario");
+  const usuario = (campo ? campo.value : ss.getItem("usuario") || "").trim().toLowerCase();
+  if (!usuario) return dibujar("Ingresá tu usuario");
+  ss.setItem("usuario", usuario);
+  ocupado = true; dibujar();
+  // En la demo no hay correo: los usuarios de prueba entran con clave
+  const r = local ? { cuerpo:{ ok:true, data:{ mensaje:"Demo: no se envían correos. Volvé y usá «Entrar con clave» (demo123)." } } }
+                  : await pedir("POST", "/auth/codigo", { usuario });
+  ocupado = false;
+  if (!r.cuerpo?.ok) { estado = "ingreso"; return dibujar(r.cuerpo?.error?.mensaje || "No se pudo pedir el código"); }
+  aviso = r.cuerpo.data?.mensaje || "Si el usuario existe, te llega un código a tu correo de la empresa.";
+  esperaHasta = Date.now() + 60000; estado = "codigo"; dibujar();
+}
+async function ingresarCodigo(){
+  const usuario = ss.getItem("usuario") || "", codigo = (document.getElementById("fCod")?.value || "").trim();
+  if (!/^\d{6}$/.test(codigo)) return dibujar("El código tiene 6 dígitos");
+  ocupado = true; dibujar();
+  const r = await pedir("POST", "/auth/login", { usuario, clave:codigo });
+  ocupado = false;
+  if (!r.cuerpo?.ok) return dibujar(r.cuerpo?.error?.mensaje || "No se pudo ingresar");
+  guardarSesion(r.cuerpo.data);
+  entrar();
+}
 async function ingresar(){
   const usuario = document.getElementById("fUsuario").value.trim(), clave = document.getElementById("fClave").value;
   if (!usuario || !clave) return dibujar("Ingresá usuario y clave");
+  modo = "clave";
   ss.setItem("usuario", usuario);
   ocupado = true; dibujar();
   const r = await pedir("POST", "/auth/login", { usuario, clave });
@@ -149,7 +215,7 @@ function entrar(){ location.replace(params.get("volver") && /^[a-z-]+\.html/.tes
 async function salir(){
   const t = ss.getItem("token");
   if (t) await pedir("POST", "/auth/logout", {}, t);
-  ss.clear(); estado = "ingreso"; claveIngresada = ""; dibujar();
+  ss.clear(); estado = "ingreso"; claveIngresada = ""; modo = local ? "clave" : "codigo"; dibujar();
 }
 
 // Ya hay sesión válida → directo a la app

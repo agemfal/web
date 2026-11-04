@@ -100,7 +100,7 @@ App.iniciar({
         !yo ? "" : yo.usuario.origen_clave === "ldap"
           ? C.item({ estado:"info", icono:"candado", titulo:"Mi clave", detalle:"Usás la clave de la empresa (la misma de tu PC): se cambia ahí" })
           : `<li class="info clic" data-accion="clave"><span class="ic">${icono("candado")}</span><span class="cuerpo"><b>Mi clave</b>
-          <small>Clave propia del NOC · tocá para cambiarla</small></span><span class="lado">${icono("flecha")}</span></li>`,
+          <small>Clave propia de Assurance Center · tocá para cambiarla</small></span><span class="lado">${icono("flecha")}</span></li>`,
         App.rol === "ADMIN" ? "" : `<li class="info"><a class="enlace" href="notificaciones-perfil.html"><span class="ic">${icono("info")}</span><span class="cuerpo"><b>Qué te llega por tu perfil</b>
           <small>${esc(yo ? yo.notificaciones_perfil.filter(t => t.canales.length).length + " de " + yo.notificaciones_perfil.length + " tipos de aviso" : "…")}</small></span><span class="lado">${icono("flecha")}</span></a></li>`,
         ...equipos.map(e => C.item({ estado: e.es_responsable ? "ok" : "info", icono:"red", titulo:e.nombre, detalle: e.es_responsable ? "Responsable del equipo" : "Integrante" }))

@@ -76,7 +76,7 @@ const DATOS_DEMO = {
         "Síntomas: clientes GPON de las zonas Norte 1, Norte 2 y Parque Industrial sin servicio de datos ni voz. Las ONT reportan LOS (pérdida de señal óptica).\n\n" +
         "Diagnóstico inicial: el OTDR marca un evento reflectivo a 3,2 km de la OLT, compatible con un corte físico. Hay una obra vial en Av. Libertador al 4500.\n\n" +
         "Acciones: se despachó la cuadrilla de planta externa (ETA 40 min). Se evalúa el desvío por el anillo secundario; requiere aprobación del jefe de turno.\n\n" +
-        "Contactos: guardia de planta externa interno 4410 · jefe de turno NOC interno 4400." },
+        "Contactos: guardia de planta externa interno 4410 · jefe de turno interno 4400." },
     { inc:"INC000412355", servicios:["television"],  prioridad:5, grave:"posible", titulo:"Pixelado en canales HD",           inicio:minAtras(40),
       descripcion:"Clientes reportan pixelado en los canales HD del paquete premium. Afecta solo a decodificadores modelo X200." },
     { inc:"INC000412360", servicios:["television"],  prioridad:6, grave:"no", titulo:"Guía de programación desactualizada", inicio:minAtras(15),
