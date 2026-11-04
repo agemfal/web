@@ -649,6 +649,8 @@ const ReglasRBAC = (() => {
     const u = usuario(raw, e.params.id);
     if (!u) return k.fallo(404, "USUARIO_INEXISTENTE", "El usuario no existe");
     if (u.estado !== "activo") return k.fallo(409, "USUARIO_NO_ACTIVO", "Solo se resetea la clave de usuarios activos");
+    if (origenClave(u) !== "local") return k.fallo(409, "SIN_CLAVE", origenClave(u) === "codigo"
+      ? "Este usuario entra con un código por correo: no tiene clave para resetear" : "Este usuario usa la clave de la empresa");
     k.plan.usuarios_upd.push({ id:u.id, resetear_clave:true });
     k.plan.sesiones_revocar.push(u.id);
     k.audEquipos("USUARIO_CLAVE_RESETEADA", "usuario", u.id, membresias(raw, u.id).map(m => m.team_id),
@@ -1737,9 +1739,10 @@ const ReglasRBAC = (() => {
        · error "DIRECTORIO_NO_DISPONIBLE": el directorio no respondió (no cuenta como intento fallido)
      Las reglas deciden todo lo demás: estado, bloqueo por intentos, clave vencida, sesión y auditoría.
      ===================================================================== */
-  const MSJ_CRED = "Usuario o clave incorrectos";
+  const MSJ_CRED = "Usuario, clave o código incorrectos";
   const buscarLogin = (raw, q) => { q = txt(q).toLowerCase(); return q ? raw.usuarios.find(u => u.username === q || u.email.toLowerCase() === q) || null : null; };
-  const origenClave = u => u.origen_clave === "ldap" ? "ldap" : "local";
+  // local: clave propia (cuentas de emergencia) · ldap: clave de la empresa · codigo: sin clave, entra con un código por correo (SQL 019)
+  const origenClave = u => u.origen_clave === "ldap" ? "ldap" : u.origen_clave === "codigo" ? "codigo" : "local";
   const configLogin = raw => ({ intentos:Number(raw.config?.login_bloqueo?.intentos || 5), minutos:Number(raw.config?.login_bloqueo?.minutos || 15),
     horas:Number(raw.config?.sesion_horas || 12) });
 
@@ -1762,7 +1765,7 @@ const ReglasRBAC = (() => {
     const q = txt(e.body.usuario).toLowerCase(), u = buscarLogin(raw, q), ahora = k.ahora;
     const audFallo = (motivo, user) => k.aud("LOGIN_FALLIDO", "usuario", user?.id || null, null, null,
       { justificacion:null, datos:{ usuario:q.slice(0, 120), motivo, origen:v.origen || null } });
-    if (!q || !txt(e.body.clave)) return k.fallo(400, "DATOS_INCOMPLETOS", "Ingresá usuario y clave");
+    if (!q || !txt(e.body.clave)) return k.fallo(400, "DATOS_INCOMPLETOS", "Ingresá tu usuario y la clave o el código");
     if (!u || u.estado !== "activo") { audFallo(!u ? "usuario_inexistente" : "usuario_" + u.estado, u); return falloIngreso(k, 401, "CREDENCIALES_INVALIDAS", MSJ_CRED); }
     if (u.bloqueado_hasta && Date.parse(u.bloqueado_hasta) > Date.parse(ahora)) {
       const min = Math.max(1, Math.ceil((Date.parse(u.bloqueado_hasta) - Date.parse(ahora)) / 60000));
@@ -1826,6 +1829,7 @@ const ReglasRBAC = (() => {
     const no = sinSesion(k); if (no) return no;
     const u = usuario(raw, auth.id), nueva = String(e.body.nueva ?? "");
     if (origenClave(u) === "ldap") return k.fallo(409, "CLAVE_EXTERNA", "Usás la clave de la empresa: se cambia donde cambiás la clave de tu PC");
+    if (origenClave(u) === "codigo") return k.fallo(409, "SIN_CLAVE", "Entrás con un código que te llega por correo: no tenés clave para cambiar");
     if (!txt(e.body.actual) || !nueva) return k.fallo(400, "DATOS_INCOMPLETOS", "Ingresá tu clave actual y la nueva");
     if (v.credencial_ok !== true) return k.fallo(422, "CLAVE_ACTUAL_INCORRECTA", "La clave actual no es correcta");
     const debil = claveDebil(nueva, raw.config?.politica_clave); if (debil) return k.fallo(422, "CLAVE_DEBIL", debil);
