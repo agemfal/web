@@ -520,7 +520,7 @@ const App = {
      Escalamientos, SLA vencido y convocatoria general: aviso a pantalla completa con sonido y vibración que se repite
      hasta que la persona toma el INC, lo abre o lo silencia. Se apaga sola si otro equipo toma el INC. Se puede desactivar en Perfil. */
   ALARMA_TIPOS: ["escalamiento", "sla", "convocatoria_general"],
-  _alarma: null, _audio: null,
+  _alarma: null, _audio: null, _salida: null,
   alarmaOn(){ try { return localStorage.getItem("alarmaSonora") !== "0"; } catch { return true; } },
   alarmaConfigurar(on){ try { localStorage.setItem("alarmaSonora", on ? "1" : "0"); } catch {} if (!on) this.cerrarAlarma(); },
   // El navegador solo deja sonar después de un toque: se prepara el audio con el primer toque de la sesión
@@ -536,12 +536,25 @@ const App = {
   sonar(){
     const c = this.desbloquearAudio();
     const suena = !!c && c.state === "running";
-    if (suena) [[880, 0], [660, .28]].forEach(([hz, t]) => {
-      const o = c.createOscillator(), g = c.createGain(), ini = c.currentTime + t;
-      o.type = "square"; o.frequency.value = hz;
-      g.gain.setValueAtTime(.0001, ini); g.gain.exponentialRampToValueAtTime(.25, ini + .02); g.gain.exponentialRampToValueAtTime(.0001, ini + .25);
-      o.connect(g).connect(c.destination); o.start(ini); o.stop(ini + .26);
-    });
+    if (suena) {
+      /* Más fuerte pero no estridente: el tono cuadrado pasa por un filtro que le saca los agudos que lastiman,
+         y un compresor pone techo a los picos (sube el volumen percibido sin saturar). Dos pares "ti-ta" por ciclo. */
+      if (!this._salida) {
+        const comp = c.createDynamicsCompressor();
+        comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 6; comp.attack.value = .003; comp.release.value = .15;
+        const filtro = c.createBiquadFilter();
+        filtro.type = "lowpass"; filtro.frequency.value = 2600; filtro.Q.value = .7;
+        filtro.connect(comp).connect(c.destination);
+        this._salida = filtro;
+      }
+      [[988, 0], [784, .2], [988, .5], [784, .7]].forEach(([hz, t]) => {
+        const o = c.createOscillator(), g = c.createGain(), ini = c.currentTime + t;
+        o.type = "square"; o.frequency.value = hz;
+        g.gain.setValueAtTime(.0001, ini); g.gain.exponentialRampToValueAtTime(.18, ini + .015);
+        g.gain.setValueAtTime(.18, ini + .13); g.gain.exponentialRampToValueAtTime(.0001, ini + .18);
+        o.connect(g).connect(this._salida); o.start(ini); o.stop(ini + .19);
+      });
+    }
     try { if (navigator.userActivation?.hasBeenActive !== false) navigator.vibrate?.([300, 120, 300]); } catch {}   // el navegador solo deja vibrar después de un toque
     return suena;
   },
