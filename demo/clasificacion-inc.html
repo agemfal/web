@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Clasificación de INC</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* CLASIFICACIÓN DE INC — categoría = Prioridad × INC Grave. El orden de la lista define P1, P2…
+   Solo el Administrador la edita: puede agregar prioridades, valores de "INC Grave" y categorías.
+   El backend valida y no deja cambiar la combinación de una P# que usan INC abiertos. */
+let datos = null, error = null, ed = null, justificacion = "", gen = 0, seq = 0, catAbierta = null;   // categoría desplegada para editar
+const SEV_TXT = { crit:"Crítica (rojo)", warn:"Alta (amarillo)" };
+const MAYOR_TXT = { si:"Sí: Escritorio en rojo", posible:"Posible: Escritorio en amarillo", no:"No" };
+const copia = x => JSON.parse(JSON.stringify(x));
+const original = () => ({ prioridades:copia(datos.prioridades), graves:copia(datos.graves), categorias:copia(datos.categorias), sla_riesgo_pct:datos.sla_riesgo_pct ?? 0.8 });
+
+async function cargar(){
+  const r = await App.api("GET", "/clasificacion");
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  datos = r.cuerpo.ok ? r.cuerpo.data : null;
+  if (datos) { ed = original(); gen++; }
+  App.redibujar();
+}
+// Lo escrito pasa al estado (solo si la pantalla es la actual)
+function leer(){
+  if (!ed) return;
+  document.querySelectorAll(`[data-fila][data-gen="${gen}"]`).forEach(el => {
+    const [lista, j] = el.dataset.fila.split(":"), x = ed[lista][Number(j)]; if (!x) return;
+    el.querySelectorAll("[data-campo]").forEach(c => { x[c.dataset.campo] = c.value; });
+  });
+  const t = document.getElementById("fJust"); if (t) justificacion = t.value;
+  const rp = document.getElementById("fRiesgo"); if (rp) ed.sla_riesgo_pct = Number(rp.value) / 100;
+  ed.categorias.forEach(c => { c.sla_min = Number(c.sla_min); });
+}
+const nombrePrio = id => ed.prioridades.find(x => x.id === id)?.nombre || "—";
+const nombreGrave = id => ed.graves.find(x => x.id === id)?.nombre || "—";
+const cambiado = () => JSON.stringify(ed) !== JSON.stringify(original());
+const sel = (campo, valor, opciones) => `<select data-campo="${campo}" data-recalc>${opciones.map(([v, t]) => `<option value="${esc(v)}" ${v === valor ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+const quitar = (lista, j, desactivar) => `<button class="boton chico peligro" data-accion="cl:quitar:${lista}:${j}" ${desactivar ? "disabled" : ""} aria-label="Quitar">${icono("x")}</button>`;
+
+function filaPrio(x, j){
+  const usada = ed.categorias.some(c => c.prioridad === x.id);
+  return `<div class="fila-cfg" data-fila="prioridades:${j}" data-gen="${gen}">
+    <input data-campo="nombre" value="${esc(x.nombre)}" maxlength="40" placeholder="Nombre">
+    ${sel("severidad", x.severidad, Object.entries(SEV_TXT))}
+    ${quitar("prioridades", j, usada || ed.prioridades.length === 1)}</div>`;
+}
+function filaGrave(x, j){
+  const usada = ed.categorias.some(c => c.grave === x.id);
+  return `<div class="fila-cfg" data-fila="graves:${j}" data-gen="${gen}">
+    <input data-campo="nombre" value="${esc(x.nombre)}" maxlength="40" placeholder="Nombre">
+    ${sel("mayor", x.mayor, Object.entries(MAYOR_TXT))}
+    ${quitar("graves", j, usada || ed.graves.length === 1)}</div>`;
+}
+function filaCat(c, j){
+  const p = j + 1, enUso = datos.en_uso.includes(p);
+  const sev = ed.prioridades.find(x => x.id === c.prioridad)?.severidad || "warn";
+  return `<div class="nivel-esc" data-fila="categorias:${j}" data-gen="${gen}">
+    <div class="cab"><span class="pos">P${p}</span><span class="chip ${sev}"><span class="punto"></span>${esc(c.nombre || "—")}<small class="p-cat">P${p}</small></span>
+      ${enUso ? `<small class="ic-txt" title="Hay INC abiertos con esta categoría">${icono("candado")}en uso</small>` : ""}
+      <span class="acciones-nivel">
+        <button class="boton chico" data-accion="cl:subir:${j}" ${j === 0 ? "disabled" : ""} aria-label="Subir">↑</button>
+        <button class="boton chico" data-accion="cl:bajar:${j}" ${j === ed.categorias.length - 1 ? "disabled" : ""} aria-label="Bajar">↓</button>
+        ${quitar("categorias", j, ed.categorias.length === 1)}
+        <button class="boton chico ${j === catAbierta ? "primario" : ""}" data-accion="cl:editar:${j}" aria-expanded="${j === catAbierta}">${j === catAbierta ? "Listo" : "Editar"}</button></span></div>
+    ${j !== catAbierta ? `<small style="color:var(--suave)">Prioridad ${esc(nombrePrio(c.prioridad))} · Incidente mayor ${esc(nombreGrave(c.grave))} · SLA ${esc(c.sla_min ?? 1440)} min</small>` : `<div class="fila-cfg tres">
+      <input data-campo="nombre" value="${esc(c.nombre)}" maxlength="40" placeholder="Nombre de la categoría" data-recalc>
+      ${sel("prioridad", c.prioridad, ed.prioridades.map(x => [x.id, "Prioridad: " + x.nombre]))}
+      ${sel("grave", c.grave, ed.graves.map(x => [x.id, "Incidente mayor: " + x.nombre]))}
+      <span class="con-unidad"><input type="number" data-campo="sla_min" min="5" max="43200" value="${esc(c.sla_min ?? 1440)}"><em>minutos de SLA${c.sla_min >= 60 ? ` (${+(c.sla_min / 60).toFixed(1)} h)` : ""}</em></span>
+    </div>`}</div>`;
+}
+// Grilla Prioridad × Incidente mayor: de un vistazo qué categoría corresponde a cada combinación; tocar una celda la abre
+function grilla(){
+  return `<div style="overflow-x:auto"><table class="grilla-cat"><thead><tr><th>Prioridad ↓ · Incidente mayor →</th>${ed.graves.map(g => `<th>${esc(g.nombre)}</th>`).join("")}</tr></thead>
+    <tbody>${ed.prioridades.map(pr => `<tr><th>${esc(pr.nombre)}</th>${ed.graves.map(g => {
+      const j = ed.categorias.findIndex(c => c.prioridad === pr.id && c.grave === g.id), c = ed.categorias[j];
+      return `<td>${c ? `<button type="button" class="celda-cat ${pr.severidad}" data-accion="cl:editar:${j}"><b>${esc(c.nombre)}</b><small>P${j + 1} · SLA ${c.sla_min >= 60 ? +(c.sla_min / 60).toFixed(1) + " h" : esc(c.sla_min) + " min"}</small></button>`
+        : `<button type="button" class="celda-cat vacia" data-accion="cl:crear:${esc(pr.id)}:${esc(g.id)}">${icono("mas")}Crear</button>`}</td>`; }).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+async function guardar(){
+  leer();
+  // Lo nuevo no tiene id todavía: se manda sin id y las categorías lo referencian por nombre
+  const nuevo = id => String(id).startsWith("#");
+  const ref = (lista, id) => nuevo(id) ? ed[lista].find(x => x.id === id).nombre : id;
+  const body = {
+    prioridades: ed.prioridades.map(x => ({ ...(nuevo(x.id) ? {} : { id:x.id }), nombre:x.nombre, severidad:x.severidad })),
+    graves: ed.graves.map(x => ({ ...(nuevo(x.id) ? {} : { id:x.id }), nombre:x.nombre, mayor:x.mayor })),
+    categorias: ed.categorias.map(c => ({ nombre:c.nombre, prioridad:ref("prioridades", c.prioridad), grave:ref("graves", c.grave), sla_min:Number(c.sla_min) })),
+    sla_riesgo_pct: ed.sla_riesgo_pct,
+    justificacion };
+  const r = await App.enviar("PUT", "/clasificacion", body, "Clasificación guardada");
+  if (!r) return;
+  await App.sincronizarSesion();          // la app toma la nueva clasificación (etiquetas, formularios)
+  justificacion = ""; await cargar();
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Clasificación de INC",
+  render: () => {
+    leer();
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando…", "reloj") });
+    if (!datos.puede_editar) return C.tarjeta({ titulo:"Clasificación de INC", iconoTit:"filtro", cuerpo:`<ul class="lista">${datos.categorias.map(c =>
+      `<li class="${sevInc(c.p)}"><span class="pos">P${c.p}</span><span class="cuerpo"><b>${esc(c.nombre)}</b><small>Prioridad ${esc(datos.prioridades.find(x => x.id === c.prioridad)?.nombre)} · Incidente mayor ${esc(datos.graves.find(x => x.id === c.grave)?.nombre)}</small></span></li>`).join("")}</ul>
+      <p class="cambio" style="margin:10px 0 0">La define el Administrador.</p>` });
+    const faltan = ed.prioridades.flatMap(p => ed.graves.map(g => [p, g])).filter(([p, g]) => !ed.categorias.some(c => c.prioridad === p.id && c.grave === g.id));
+    return `
+      ${C.tarjeta({ titulo:"Categorías · el orden define P1, P2…", iconoTit:"filtro", cuerpo:`
+        <p class="cambio" style="margin:0 0 10px">De mayor a menor prioridad y gravedad. Al crear un INC se eligen Prioridad e Incidente mayor y la app asigna la categoría. Una P# con INC abiertos (en uso) se puede renombrar, pero no cambiar de combinación.</p>
+        ${grilla()}
+        <div class="sub">Orden de urgencia (P1 primero)</div>
+        ${ed.categorias.map(filaCat).join("")}
+        <div class="btns"><button class="boton chico" data-accion="cl:agregar:categorias">${icono("mas")} Agregar categoría</button>
+          ${faltan.length ? `<button class="boton chico" data-accion="cl:completar">Completar combinaciones faltantes (${faltan.length})</button>` : ""}</div>` })}
+      ${C.tarjeta({ titulo:"SLA", iconoTit:"reloj", cuerpo:`
+        <p class="cambio" style="margin:0 0 10px">El SLA de cada categoría se carga arriba, en cada una. Se cuenta desde el inicio del INC; si cambia la categoría, se recalcula.</p>
+        <label class="campo" style="margin:0"><span>Avisar "SLA en riesgo" al</span><span class="con-unidad"><input id="fRiesgo" type="number" min="30" max="99" value="${Math.round((ed.sla_riesgo_pct ?? 0.8) * 100)}" data-recalc><em>% del tiempo</em></span></label>` })}
+      ${C.tarjeta({ titulo:"Prioridades", iconoTit:"alerta", cuerpo:`${ed.prioridades.map(filaPrio).join("")}
+        <button class="boton chico" data-accion="cl:agregar:prioridades">${icono("mas")} Agregar prioridad</button>` })}
+      ${C.tarjeta({ titulo:"Incidente mayor", iconoTit:"alerta", cuerpo:`${ed.graves.map(filaGrave).join("")}
+        <button class="boton chico" data-accion="cl:agregar:graves">${icono("mas")} Agregar valor</button>
+        <p class="cambio" style="margin:10px 0 0">"Sí" pone el Escritorio en rojo (Incidente mayor activo); "Posible", en amarillo (Posible incidente mayor).</p>` })}
+      ${C.tarjeta({ titulo:"Guardar", iconoTit:"check", cuerpo:`
+        <label class="campo"><span>Justificación (queda en la auditoría)</span><textarea id="fJust" maxlength="300" placeholder="Ej.: Se agrega la prioridad Media">${esc(justificacion)}</textarea></label>
+        <div class="btns"><button class="boton" data-accion="cl:deshacer" ${cambiado() ? "" : "disabled"}>Deshacer</button>
+          <button class="boton primario" data-accion="cl:guardar" ${cambiado() ? "" : "disabled"}>${icono("check")} Guardar cambios</button></div>` })}`;
+  },
+  alMontar: () => {
+    if (!datos && !error) cargar();
+    document.querySelectorAll("[data-recalc]").forEach(el => el.onchange = () => { leer(); App.redibujar(); });
+    document.querySelectorAll(".fila-cfg input").forEach(el => el.oninput = () => { leer(); const b = document.querySelector('[data-accion="cl:guardar"]'); if (b) b.disabled = !cambiado(); });
+  },
+  accion: id => {
+    const [p, a, x, y] = id.split(":");
+    if (p !== "cl") return;
+    leer();
+    const C_ = ed.categorias, j = Number(x);
+    if (a === "agregar" && x === "prioridades") ed.prioridades.push({ id:"#" + (++seq), nombre:"Nueva prioridad", severidad:"warn" });
+    if (a === "agregar" && x === "graves") ed.graves.push({ id:"#" + (++seq), nombre:"Nuevo valor", mayor:"no" });
+    if (a === "agregar" && x === "categorias") { C_.push({ nombre:"Nueva categoría", prioridad:ed.prioridades.at(-1).id, grave:ed.graves.at(-1).id, sla_min:1440 }); catAbierta = C_.length - 1; }
+    if (a === "editar") catAbierta = catAbierta === j ? null : j;
+    if (a === "crear") { const pr = ed.prioridades.find(q => q.id === x), g = ed.graves.find(q => q.id === y);
+      C_.push({ nombre:`${pr.nombre} · ${g.nombre}`, prioridad:x, grave:y, sla_min:1440 }); catAbierta = C_.length - 1; }
+    if (a === "completar") ed.prioridades.forEach(pr => ed.graves.forEach(g => {
+      if (!C_.some(c => c.prioridad === pr.id && c.grave === g.id)) C_.push({ nombre:`${pr.nombre} · ${g.nombre}`, prioridad:pr.id, grave:g.id, sla_min:1440 }); }));
+    if (a === "quitar") ed[x].splice(Number(y), 1);
+    if (a === "subir" && j > 0) [C_[j - 1], C_[j]] = [C_[j], C_[j - 1]];
+    if (a === "bajar" && j < C_.length - 1) [C_[j + 1], C_[j]] = [C_[j], C_[j + 1]];
+    if (a === "deshacer") ed = original();
+    if (a === "guardar") { guardar(); return true; }
+    if (a === "subir" && catAbierta === j) catAbierta = j - 1;
+    if (a === "bajar" && catAbierta === j) catAbierta = j + 1;
+    if (a === "quitar") catAbierta = null;
+    gen++;
+    App.redibujar();
+    if (["editar", "crear", "agregar"].includes(a) && catAbierta != null)
+      requestAnimationFrame(() => document.querySelector(`[data-fila="categorias:${catAbierta}"]`)?.scrollIntoView({ block:"center", behavior:"smooth" }));
+    return true;
+  }
+});
+</script>
+</body>
+</html>

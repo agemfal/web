@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Reportes</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="app.js"></script>
+<script>
+/* REPORTES — métricas de INC (red fija y móvil) */
+App.iniciar({
+  id: "reportes",
+  titulo: "Reportes",
+  render: d => {
+    const porServ = ordenarServicios(d).filter(s => !esDisp(s)).map(s => ({ s, n: incDe(d, s).length, e: estadoServicio(d, s) }));
+    const filasDisp = ordenarServicios(d).filter(esDisp).map(s => {
+      const e = estadoServicio(d, s);
+      return `<li class="${e}"><span class="cuerpo" style="flex:0 0 38%"><b>${esc(s.nombre)}</b></span>${C.barra((s.disponibilidad - 90) * 10)}<span class="pct-fijo num">${s.disponibilidad.toFixed(1)}%</span></li>`;
+    }).join("");
+    const max = Math.max(1, ...porServ.map(x => x.n));
+    const filasServ = porServ.map(x =>
+      `<li class="${x.e}"><span class="cuerpo" style="flex:0 0 42%"><b>${esc(x.s.nombre)}</b><small>${esc(x.s.red || "")}</small></span>${C.barra(x.n / max * 100)}<span class="pct-fijo num">${x.n}</span></li>`).join("");
+
+    const prios = clasif().categorias.map(c => c.p).map(p => ({ p, n: d.incidentes.filter(i => i.prioridad === p).length }));
+    const maxP = Math.max(1, ...prios.map(x => x.n));
+    const filasPrio = prios.map(x => {
+      const e = sevInc(x.p);
+      return `<li class="${e}"><span class="pos" title="${esc(nombreInc(x.p))}">P${x.p}</span><span class="nom-cat">${esc(nombreInc(x.p))}</span>${C.barra(x.n / maxP * 100)}<span class="pct-fijo num">${x.n}</span></li>`;
+    }).join("");
+
+    const antiguos = [...d.incidentes].sort((a,b) => new Date(a.inicio) - new Date(b.inicio)).slice(0, 3);
+
+    return `
+      ${C.subnavInicio("reportes")}
+      ${C.tarjeta({ titulo:"INC abiertos por servicio", iconoTit:"server", cuerpo:`<ul class="lista">${filasServ}</ul>` })}
+      ${filasDisp ? C.tarjeta({ titulo:"Disponibilidad", iconoTit:"antena", cuerpo:`<ul class="lista">${filasDisp}</ul>` }) : ""}
+      <div class="dos-col">
+        ${C.tarjeta({ titulo:"Por prioridad", iconoTit:"filtro", cuerpo:`<ul class="lista">${filasPrio}</ul>` })}
+        ${C.tarjeta({ titulo:"Más antiguos", iconoTit:"reloj", cuerpo: antiguos.length
+          ? `<ul class="lista">${antiguos.map(i => C.filaInc(d, i)).join("")}</ul>` : C.vacio("Sin incidentes abiertos") })}
+      </div>`;
+  }
+});
+</script>
+</body>
+</html>

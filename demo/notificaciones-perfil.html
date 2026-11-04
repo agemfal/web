@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Notificaciones por perfil</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* NOTIFICACIONES POR PERFIL — qué tipos de aviso recibe cada rol y por qué canales.
+   La edita el Administrador; el backend la aplica a todas las notificaciones (también al escalamiento).
+   El horario personal de cada usuario se suma encima. */
+let datos = null, error = null, rolSel = null, editado = null, justificacion = "";
+const CANAL_TXT = { app:"App", email:"Correo", telegram:"Telegram", llamada:"Llamada" };
+
+async function cargar(){
+  const r = await App.api("GET", "/notificaciones/politica");
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  datos = r.cuerpo.ok ? r.cuerpo.data : null;
+  if (datos) { editado = JSON.parse(JSON.stringify(datos.politica)); rolSel ||= datos.puede_editar ? datos.roles[0].codigo : datos.mi_rol; }
+  App.redibujar();
+}
+function leer(){
+  if (!datos?.puede_editar) return;
+  const pol = editado[rolSel];
+  document.querySelectorAll(`[data-tipo][data-rol="${rolSel}"]`).forEach(el => { pol[el.dataset.tipo] = [...el.querySelectorAll("input:checked")].map(x => x.value); });
+  const j = document.getElementById("fJust"); if (j) justificacion = j.value;
+}
+const cambiado = () => JSON.stringify(editado) !== JSON.stringify(datos.politica);
+
+async function guardar(){
+  leer();
+  const r = await App.enviar("PUT", "/notificaciones/politica", { politica:editado, justificacion }, "Notificaciones por perfil guardadas");
+  if (!r) return;
+  (r.advertencias || []).forEach((a, i) => setTimeout(() => App.aviso("Atención: " + a, 6000), 2800 * (i + 1)));
+  justificacion = ""; await cargar();
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Notificaciones por perfil",
+  render: () => {
+    leer();
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando…", "reloj") });
+    const ed = datos.puede_editar, pol = editado[rolSel];
+    const filas = datos.tipos.map(t => {
+      const cs = pol[t.id] || [];
+      return `<div class="nivel-esc" ${ed ? `data-tipo="${esc(t.id)}" data-rol="${esc(rolSel)}"` : ""}>
+        <div class="cab"><b style="white-space:normal">${esc(t.nombre)}</b>${cs.length ? "" : `<span style="margin-left:auto">${C.chip("warn", "No le llega")}</span>`}</div>
+        <div class="toggles">${datos.canales.map(c => ed
+          ? `<label class="toggle"><input type="checkbox" value="${c}" ${cs.includes(c) ? "checked" : ""}><span>${CANAL_TXT[c]}</span></label>`
+          : `<span class="toggle"><span style="${cs.includes(c) ? "" : "opacity:.35;text-decoration:line-through"}">${CANAL_TXT[c]}</span></span>`).join("")}</div>
+      </div>`;
+    }).join("");
+    return `
+      ${ed ? `<div class="filtros">${datos.roles.map(r => `<button data-accion="np:rol:${r.codigo}" class="${r.codigo === rolSel ? "activo" : ""}">${esc(r.nombre)}</button>`).join("")}</div>` : ""}
+      ${C.tarjeta({ titulo: ed ? `Qué recibe: ${datos.roles.find(r => r.codigo === rolSel).nombre}` : "Qué te llega por tu perfil", iconoTit:"campana", cuerpo:`
+        <p class="cambio" style="margin:0 0 10px">${ed ? "Marcá por qué canales le llega cada tipo de aviso a este perfil. Sin canales = no le llega. Se aplica a todas las notificaciones, también a las del escalamiento."
+          : `Lo define el Administrador para tu perfil (${esc(ROLES_TXT[datos.mi_rol] || datos.mi_rol)}). Además, tu horario de avisos decide cuándo te pueden molestar.`}</p>
+        ${filas}` })}
+      ${ed ? C.tarjeta({ titulo:"Guardar", iconoTit:"check", cuerpo:`
+        <label class="campo"><span>Justificación (queda en la auditoría)</span><textarea id="fJust" maxlength="300" placeholder="Ej.: Reducir ruido en el turno operativo">${esc(justificacion)}</textarea></label>
+        <div class="btns"><button class="boton" data-accion="np:deshacer" ${cambiado() ? "" : "disabled"}>Deshacer</button>
+          <button class="boton primario" data-accion="np:guardar" ${cambiado() ? "" : "disabled"}>${icono("check")} Guardar cambios</button></div>` }) : ""}`;
+  },
+  alMontar: () => {
+    if (!datos && !error) cargar();
+    document.querySelectorAll("[data-tipo] input").forEach(el => el.onchange = () => { leer(); App.redibujar(); });
+  },
+  accion: id => {
+    const [p, a, x] = id.split(":");
+    if (p !== "np") return;
+    leer();
+    if (a === "rol") rolSel = x;
+    if (a === "deshacer") editado = JSON.parse(JSON.stringify(datos.politica));
+    if (a === "guardar") { guardar(); return true; }
+    App.redibujar();
+    return true;
+  }
+});
+</script>
+</body>
+</html>

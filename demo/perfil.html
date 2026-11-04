@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Perfil</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<!-- Demo Local: backend simulado del módulo de usuarios y equipos -->
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* PERFIL — cuenta, rol, equipos, administración y configuración */
+const enlace = (href, ic, titulo, detalle) => `<li class="info"><a class="enlace" href="${href}">
+  <span class="ic">${icono(ic)}</span><span class="cuerpo"><b>${esc(titulo)}</b><small>${esc(detalle)}</small></span>
+  <span class="lado">${icono("flecha")}</span></a></li>`;
+const demo = () => CONFIG.MODO_DATOS === "local" && typeof SimuladorRBAC !== "undefined";
+let yo = null, demoAbierto = false;   // GET /me (incluye mi horario de avisos)
+async function cargarYo(){ const r = await App.api("GET", "/me"); if (r.cuerpo?.ok) { yo = r.cuerpo.data; App.redibujar(); } }
+
+// Horario armado "laboral": L–V 8:00–20:00
+const laboral = d => { const f = d?.horario?.franjas; return f?.length === 1 && f[0].dias.join() === "1,2,3,4,5" && f[0].desde === "08:00" && f[0].hasta === "20:00"; };
+// Mi horario de avisos: cuándo me pueden molestar las escalaciones. La matriz del equipo no lo pisa.
+async function editarHorario(){
+  const d = yo?.usuario?.disponibilidad, f0 = d?.horario?.franjas?.[0];
+  const DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+  const f = await App.formulario({ titulo:"Mi horario de avisos", campos:[
+    { tipo:"nota", texto:"Las escalaciones solo te suenan (app, correo, Telegram, llamada) dentro de este horario. Fuera de él igual te quedan en la campana, en silencio, y el escalamiento sigue con el próximo nivel. Ninguna matriz de equipo puede cambiar esto: lo decidís vos." },
+    { id:"modalidad", etiqueta:"¿Cuándo te pueden avisar?", tipo:"select", valor: !d ? "siempre" : laboral(d) ? "laboral" : "franjas",
+      opciones:[{ valor:"siempre", texto:"Siempre (24 × 7)" }, { valor:"laboral", texto:"Horario laboral (lunes a viernes, 8 a 20)" }, { valor:"franjas", texto:"Personalizado: elijo días y horas" }] },
+    { id:"dias", etiqueta:"Días (solo si elegiste Personalizado)", tipo:"multi", valor:(f0?.dias || [1, 2, 3, 4, 5]).map(String), opciones:DIAS.map((t, i) => ({ valor:String(i + 1), texto:t })) },
+    { id:"desde", etiqueta:"Desde", tipo:"time", valor:f0?.desde || "08:00" },
+    { id:"hasta", etiqueta:"Hasta", tipo:"time", valor:f0?.hasta || "20:00" },
+    { id:"criticos", etiqueta:"Excepción", tipo:"multi", valor: d?.criticos_siempre ? ["si"] : [], opciones:[{ valor:"si", texto:`Avisarme igual si el INC es crítico (${clasif().categorias.filter(c => sevInc(c.p) === "crit").map(c => c.nombre).join(", ")})` }] } ] });
+  if (!f) return;
+  const body = f.modalidad === "siempre" ? { modalidad:"siempre" }
+    : f.modalidad === "laboral" ? { modalidad:"franjas", criticos_siempre:f.criticos.includes("si"), franjas:[{ dias:[1, 2, 3, 4, 5], desde:"08:00", hasta:"20:00" }] }
+    : { modalidad:"franjas", criticos_siempre:f.criticos.includes("si"), franjas:[{ dias:f.dias.map(Number), desde:f.desde, hasta:f.hasta }] };
+  if (body.modalidad === "franjas" && !f.dias.length) return App.aviso("Elegí al menos un día");
+  if (await App.enviar("PUT", "/me/disponibilidad", body, "Horario de avisos guardado")) cargarYo();
+}
+
+// Mi teléfono para el canal Llamada (escalamientos). Vacío = no me llaman.
+async function editarTelefono(){
+  const f = await App.formulario({ titulo:"Mi teléfono para llamadas", campos:[
+    { tipo:"nota", texto:"Si un escalamiento te avisa por Llamada, te llaman a este número y te leen el INC. Presionando 1 lo tomás. La llamada respeta tu horario de avisos. Dejalo vacío si no querés que te llamen." },
+    { id:"telefono", etiqueta:"Teléfono con código de país", tipo:"tel", valor:yo?.usuario?.telefono || "", ayuda:"+54 9 11 5555-0101" } ] });
+  if (!f) return;
+  if (await App.enviar("PUT", "/me/telefono", { telefono:f.telefono }, f.telefono ? "Teléfono guardado" : "Teléfono quitado: no te van a llamar")) cargarYo();
+}
+
+async function cambiarClave(){
+  const f = await App.formulario({ titulo:"Cambiar mi clave", enviar:"Cambiar clave", campos:[
+    { tipo:"nota", texto:"Mínimo 12 caracteres, con mayúscula, minúscula y número, y sin tu usuario. Se cierran tus otras sesiones abiertas." },
+    { id:"actual", etiqueta:"Clave actual", tipo:"password", requerido:true },
+    { id:"nueva", etiqueta:"Clave nueva", tipo:"password", requerido:true },
+    { id:"repetir", etiqueta:"Repetir clave nueva", tipo:"password", requerido:true } ] });
+  if (!f) return;
+  if (f.nueva !== f.repetir) return App.aviso("Las claves nuevas no coinciden", 3500);
+  await App.enviar("POST", "/me/clave", { actual:f.actual, nueva:f.nueva }, "Clave cambiada");
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Perfil",
+  render: () => {
+    const me = App.me;
+    const equipos = me ? me.equipos : (() => { try { return JSON.parse(sessionStorage.getItem("equipos") || "[]"); } catch { return []; } })();
+    // Configuración agrupada por tema (cada uno ve solo lo que su perfil permite)
+    const grupos = [
+      ["Personas", [
+        App.puede("ver_usuarios") || App.puede("solicitar_alta_usuario") ? enlace("usuarios.html", "usuario", "Usuarios", "Altas, roles, equipos y estado") : "",
+        App.puede("ver_equipos") ? enlace("equipos.html", "red", "Equipos", "Responsable, integrantes, horario, servicios y matriz") : "" ]],
+      ["Operación", [
+        App.rol === "ADMIN" ? enlace("catalogo-servicios.html", "server", "Servicios", "Servicios de cada red (Fija, Móvil…): agregar, editar o sacar") : "",
+        App.rol === "ADMIN" ? enlace("clasificacion-inc.html", "filtro", "Clasificación y SLA", "Prioridades, incidente mayor, categorías y SLA") : "",
+        App.puede("editar_matriz") ? enlace("matrices.html", "subir", "Matrices de escalamiento", "Orden de aviso por equipo, o el mismo para varios o todos") : "" ]],
+      ["Avisos", [ App.rol === "ADMIN" ? enlace("notificaciones-perfil.html", "campana", "Notificaciones por perfil", "Qué avisos recibe cada rol y por qué canales") : "" ]],
+      ["Control", [ App.puede("ver_auditoria") ? enlace("auditoria.html", "check", "Auditoría", "Quién hizo qué, cuándo y en qué equipo") : "" ]]
+    ].map(([t, xs]) => [t, xs.filter(Boolean)]).filter(([, xs]) => xs.length);
+    const actual = sessionStorage.getItem("usuarioDemo") || USUARIO_DEMO_POR_ROL[App.rol];
+    const usuariosDemo = demo() ? SimuladorRBAC.estado().usuarios.filter(u => u.estado === "activo") : [];
+    const falta = CONFIG.MODO_DATOS === "local" && typeof SimuladorRBAC === "undefined";
+    return `
+      ${falta ? C.tarjeta({ clase:"crit", cuerpo: C.vacio("No se cargó el módulo de usuarios del demo: copiá rbac-demo.js en la misma carpeta que app.js y recargá con Ctrl+F5.", "alerta") }) : ""}
+      ${C.tarjeta({ titulo:"Mi cuenta", iconoTit:"usuario", cuerpo: C.lista([
+        C.item({ estado:"info", icono:"usuario", titulo: App.usuario, detalle: ROLES_TXT[App.rol] || App.rol }),
+        `<li class="info clic" data-accion="horario"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Mi horario de avisos</b>
+          <small>${esc(yo ? yo.usuario.disponibilidad_txt : "…")} · tocá para cambiarlo</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        `<li class="info clic" data-accion="alarma-sw"><span class="ic">${icono("alerta")}</span><span class="cuerpo"><b>Alarma en pantalla</b>
+          <small>${App.alarmaOn() ? "Activada" : "Desactivada"}: los escalamientos y SLA vencidos suenan y vibran hasta que actuás · tocá para ${App.alarmaOn() ? "desactivarla" : "activarla"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        `<li class="info clic" data-accion="alarma-probar"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Probar la alarma</b>
+          <small>Mirá y escuchá cómo te va a avisar · subí el volumen del celular</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        `<li class="info clic" data-accion="telefono"><span class="ic">${icono("telefono")}</span><span class="cuerpo"><b>Mi teléfono para llamadas</b>
+          <small>${esc(!yo ? "…" : yo.usuario.telefono || "Sin cargar: los escalamientos no te pueden llamar")} · tocá para cambiarlo</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        !yo ? "" : yo.usuario.origen_clave === "ldap"
+          ? C.item({ estado:"info", icono:"candado", titulo:"Mi clave", detalle:"Usás la clave de la empresa (la misma de tu PC): se cambia ahí" })
+          : `<li class="info clic" data-accion="clave"><span class="ic">${icono("candado")}</span><span class="cuerpo"><b>Mi clave</b>
+          <small>Clave propia de Assurance Center · tocá para cambiarla</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        App.rol === "ADMIN" ? "" : `<li class="info"><a class="enlace" href="notificaciones-perfil.html"><span class="ic">${icono("info")}</span><span class="cuerpo"><b>Qué te llega por tu perfil</b>
+          <small>${esc(yo ? yo.notificaciones_perfil.filter(t => t.canales.length).length + " de " + yo.notificaciones_perfil.length + " tipos de aviso" : "…")}</small></span><span class="lado">${icono("flecha")}</span></a></li>`,
+        ...equipos.map(e => C.item({ estado: e.es_responsable ? "ok" : "info", icono:"red", titulo:e.nombre, detalle: e.es_responsable ? "Responsable del equipo" : "Integrante" }))
+      ]) })}
+      ${grupos.length ? C.tarjeta({ titulo:"Configuración", iconoTit:"filtro", cuerpo: grupos.map(([t, xs]) =>
+        `<div class="sub grupo-cfg">${esc(t)}</div><ul class="lista">${xs.join("")}</ul>`).join("") }) : ""}
+      ${demo() ? `<details class="demo" id="modoDemo" ${demoAbierto ? "open" : ""}><summary>Modo demo · usuario demo, n8n, velocidad y datos</summary>
+        <div class="sub">Usuario demo</div>
+        <p class="cambio" style="margin:0 0 8px">Probá el sistema con otro rol. Clave de todos: demo123.</p>
+        <ul class="lista">${usuariosDemo.map(u => `<li class="${u.username === actual ? "ok" : "info"} clic" data-accion="demo:${esc(u.username)}">
+          <span class="ic">${icono("usuario")}</span>
+          <span class="cuerpo"><b>${esc(u.nombre)}</b><small>${esc(ROLES_TXT[u.rol] || u.rol)} · ${esc(u.username)}</small></span>
+          ${u.username === actual ? C.chip("ok", "En uso") : ""}</li>`).join("")}</ul>
+        <div class="sub">Conexión con n8n (solo demo)</div>
+        <p class="cambio" style="margin:0 0 8px">Los cambios de categoría de un INC se mandan también a este webhook, para que n8n actualice el INC en la base de datos.</p>
+        <div class="fila-cfg" style="grid-template-columns:1fr auto auto"><input id="fN8n" type="url" placeholder="https://tu-n8n/webhook/inc-categoria" value="${esc(App.webhookN8n() || "")}">
+          <button class="boton chico" data-accion="n8n-guardar">Guardar</button><button class="boton chico" data-accion="n8n-probar">Probar</button></div>
+        <div class="sub">Velocidad del escalamiento (solo demo)</div>
+        <div class="filtros">${[[1, "Real (1 min = 1 min)"], [60, "Rápida (1 min = 1 s)"]].map(([v, t]) =>
+          `<button data-accion="demo-vel:${v}" class="${SimuladorRBAC.velocidad() === v ? "activo" : ""}">${t}</button>`).join("")}</div>
+        <div class="btns"><button class="boton chico peligro" data-accion="demo-reiniciar">Reiniciar datos demo</button></div></details>` : ""}
+      ${C.tarjeta({ titulo:"Información de la app", iconoTit:"info", cuerpo: C.lista([
+        C.item({ estado:"info", icono:"reloj",  titulo:"Actualización automática", detalle:"Cada " + CONFIG.REFRESCO_SEG + " segundos" }),
+        C.item({ estado:"info", icono:"alerta", titulo:"Criterio de estado (por INC)", detalle:clasif().categorias.map(c => `P${c.p} ${c.nombre}`).join(" · ") }),
+        C.item({ estado:"info", icono:"server", titulo:"Origen de datos", detalle: CONFIG.MODO_DATOS === "local" ? "Local (pruebas)" : "Servidor" })
+      ]) })}
+      <button class="boton peligro" data-accion="salir">${icono("salir")} Cerrar sesión</button>`;
+  },
+  alMontar: () => {
+    if (!yo) cargarYo();
+    const d = document.getElementById("modoDemo"); if (d) d.ontoggle = () => { demoAbierto = d.open; };
+  },
+  accion: id => {
+    if (id === "horario") { editarHorario(); return true; }
+    if (id === "telefono") { editarTelefono(); return true; }
+    if (id === "alarma-sw") { App.alarmaConfigurar(!App.alarmaOn()); App.aviso(App.alarmaOn() ? "Alarma activada" : "Alarma desactivada", 2500); App.redibujar(); return true; }
+    if (id === "alarma-probar") { App.alarma({ id:"prueba", tipo:"escalamiento", titulo:"Prueba de alarma", cuerpo:"Así vas a ver y escuchar un escalamiento. Tocá Silenciar para cerrarla.", puede_tomar:false }, { prueba:true }); return true; }
+    if (id === "clave") { cambiarClave(); return true; }
+    if (id === "n8n-guardar" || id === "n8n-probar") {
+      const url = document.getElementById("fN8n").value.trim();
+      try { url ? localStorage.setItem("n8nWebhookInc", url) : localStorage.removeItem("n8nWebhookInc"); } catch {}
+      if (id === "n8n-guardar") { App.aviso(url ? "Webhook de n8n guardado" : "Conexión con n8n desactivada"); return true; }
+      if (!url) { App.aviso("Cargá la URL del webhook"); return true; }
+      App.avisarN8n("INC-PRUEBA", 6, { p:1, nombre:"Crítico Mayor", prioridad:"critica", grave:"si" }, { motivo:"Prueba de conexión" }, null, true)
+        .then(ok => ok && App.aviso("n8n respondió bien", 3000));
+      return true;
+    }
+    if (id.startsWith("demo-vel:")) { SimuladorRBAC.velocidad(Number(id.slice(9))); App.aviso("Velocidad del escalamiento actualizada"); App.redibujar(); return true; }
+    if (id.startsWith("demo:")) {
+      sessionStorage.setItem("usuarioDemo", id.slice(5));
+      sessionStorage.removeItem("tokenRBAC");
+      App.sincronizarSesion().then(d => d ? location.reload() : App.aviso("No se pudo ingresar con ese usuario"));
+      return true;
+    }
+    if (id === "demo-reiniciar") {
+      SimuladorRBAC.reiniciar();
+      ["tokenRBAC", "usuarioDemo"].forEach(k => sessionStorage.removeItem(k));
+      App.aviso("Datos demo reiniciados");
+      App.sincronizarSesion().then(() => location.reload());
+      return true;
+    }
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Auditoría</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<!-- Demo Local: backend simulado del módulo (en producción responde n8n con el mismo JSON) -->
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* AUDITORÍA — fecha, hora, usuario, acción, valor anterior, valor nuevo y equipo afectado */
+let filas = null, error = null, filtro = "todo", cargando = false;
+const POR_INC = new URLSearchParams(location.search).get("entidad_id");   // llega desde la ficha de un INC (Historial)
+const GRUPOS = {
+  todo:     () => true,
+  usuarios: f => ["usuario", "solicitud"].includes(f.entidad),
+  equipos:  f => ["team", "team_member", "matriz"].includes(f.entidad),
+  rechazos: f => ["ACCESO_DENEGADO", "OPERACION_RECHAZADA"].includes(f.accion)
+};
+const ACCION_TXT = {
+  USUARIO_ALTA_SOLICITADA:"Solicitud de alta", USUARIO_SOLICITUD_APROBADA:"Solicitud aprobada", USUARIO_SOLICITUD_RECHAZADA:"Solicitud rechazada",
+  USUARIO_SOLICITUD_VENCIDA:"Solicitud vencida", USUARIO_CREADO:"Usuario creado", USUARIO_MODIFICADO:"Usuario modificado",
+  USUARIO_ROL_CAMBIADO:"Cambio de rol", USUARIO_DESACTIVADO:"Usuario desactivado", USUARIO_ACTIVADO:"Usuario activado", USUARIO_BAJA:"Baja de usuario",
+  USUARIO_CLAVE_RESETEADA:"Clave reseteada", EQUIPO_CREADO:"Equipo creado", EQUIPO_MODIFICADO:"Equipo modificado",
+  EQUIPO_DESACTIVADO:"Equipo desactivado", EQUIPO_ACTIVADO:"Equipo activado", EQUIPO_SERVICIOS_MODIFICADOS:"Servicios del equipo",
+  EQUIPO_PRODUCTOS_MODIFICADOS:"Productos del equipo", EQUIPO_RESPONSABLE_ASIGNADO:"Responsable asignado", EQUIPO_RESPONSABLE_CAMBIADO:"Cambio de responsable",
+  EQUIPO_INTEGRANTE_AGREGADO:"Integrante agregado", EQUIPO_INTEGRANTE_REMOVIDO:"Integrante removido", MATRIZ_VERSION_CREADA:"Matriz creada",
+  INCIDENTE_ASIGNACION_LIBERADA:"Asignación liberada", ACCESO_DENEGADO:"Acceso denegado", OPERACION_RECHAZADA:"Operación rechazada",
+  AUDITORIA_CONSULTADA:"Consulta de auditoría"
+};
+const clase = f => GRUPOS.rechazos(f) ? "crit" : /BAJA|DESACTIVADO|REMOVIDO|RECHAZADA/.test(f.accion) ? "warn" : /CREADO|ACTIVADO|APROBADA|AGREGADO/.test(f.accion) ? "ok" : "info";
+
+// Valor compacto para leer en una línea: {rol:"GESTOR"} → rol: GESTOR
+function valor(v){
+  if (v == null) return "—";
+  if (Array.isArray(v)) return v.length ? v.join(", ") : "(ninguno)";
+  const esId = x => typeof x === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(x);
+  if (typeof v === "object") return Object.entries(v).filter(([k, x]) => x != null && !esId(x) && !(Array.isArray(x) && x.some(esId)) && k !== "zona_horaria")
+    .map(([k, x]) => `${k.replace(/_/g, " ")}: ${typeof x === "object" ? (x.nombre || x.modalidad || JSON.stringify(x)) : x}`).join(" · ") || "—";
+  return String(v);
+}
+
+async function recargar(){
+  if (cargando) return;
+  cargando = true;
+  const r = await App.api("GET", "/auditoria?limite=300" + (POR_INC ? "&entidad_id=" + encodeURIComponent(POR_INC) : ""));
+  cargando = false;
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  filas = r.cuerpo.ok ? r.cuerpo.data.filas.filter(f => f.accion !== "AUDITORIA_CONSULTADA") : null;
+  App.redibujar();
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Auditoría",
+  render: () => {
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!filas) return C.tarjeta({ cuerpo: C.vacio("Cargando auditoría…", "reloj") });
+    const opciones = [["todo", "Todo"], ["usuarios", "Usuarios"], ["equipos", "Equipos"], ["rechazos", "Rechazos"]];
+    const vis = filas.filter(GRUPOS[filtro]);
+    const avisoInc = POR_INC ? `<div class="card" style="display:flex;align-items:center;gap:10px"><span style="flex:1">Filtrado por <b>${esc(POR_INC)}</b></span><a class="boton chico" href="auditoria.html">Quitar filtro</a></div>` : "";
+    const items = vis.map(f => {
+      const error = f.valor_nuevo == null && f.valor_anterior == null;
+      return `<li class="${clase(f)} alto">
+        <span class="ic">${icono(GRUPOS.rechazos(f) ? "alerta" : "check")}</span>
+        <span class="cuerpo"><b>${esc(ACCION_TXT[f.accion] || f.accion)}</b>
+          <small>${esc(f.fecha)} ${esc(f.hora)} · ${esc(f.usuario_nombre || f.usuario)} · ${esc(f.equipo || "sin equipo")}</small>
+          ${error ? "" : `<span class="cambio"><b>Antes:</b> ${esc(valor(f.valor_anterior))}</span><span class="cambio"><b>Después:</b> ${esc(valor(f.valor_nuevo))}</span>`}
+          ${f.justificacion ? `<span class="cambio"><b>Motivo:</b> ${esc(f.justificacion)}</span>` : ""}
+        </span>
+      </li>`;
+    });
+    return `${avisoInc}
+      <div class="filtros">${opciones.map(([id, txt]) =>
+        `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}">${txt} <span class="num">${filas.filter(GRUPOS[id]).length}</span></button>`).join("")}</div>
+      ${C.tarjeta({ titulo:"Registro de acciones", iconoTit:"check", extra:`<span style="margin-left:auto"><button class="boton chico" data-accion="a:recargar">Actualizar</button></span>`,
+        cuerpo: items.length ? `<ul class="lista">${items.join("")}</ul>` : C.vacio("Todavía no hay acciones registradas. Probá crear un equipo o cambiar un rol.") })}`;
+  },
+  alMontar: () => { if (!filas && !error) recargar(); },
+  accion: id => {
+    if (id.startsWith("f:")) { filtro = id.slice(2); App.redibujar(); return true; }
+    if (id === "a:recargar") { filas = null; recargar(); return true; }
+  }
+});
+</script>
+</body>
+</html>

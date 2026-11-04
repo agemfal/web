@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Convocatoria general</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* CONVOCATORIA GENERAL — solo jefes. Se elige un INC abierto o se crea uno nuevo, y se convoca a TODOS al debate.
+   El botón se toca 3 veces para activarse (el backend también exige las 3 confirmaciones). */
+let datos = null, error = null, eleccion = "", toques = 0, reloj = null, enviando = false;
+const form = { titulo:"", prio:"", grave:"", servicios:[], motivo:"" };
+
+async function cargar(){
+  const r = await App.api("GET", "/debates");
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  datos = r.cuerpo.ok ? r.cuerpo.data : null;
+  if (datos && !eleccion) eleccion = datos.incidentes[0]?.inc || "nuevo";
+  App.redibujar();
+}
+
+// Guarda lo escrito antes de redibujar (el refresco automático no borra el formulario)
+function leerForm(){
+  const v = id => document.getElementById(id);
+  if (v("fTitulo")) form.titulo = v("fTitulo").value;
+  if (v("fPrio")) form.prio = v("fPrio").value;
+  if (v("fGrave")) form.grave = v("fGrave").value;
+  if (v("fMotivo")) form.motivo = v("fMotivo").value;
+  form.servicios = [...document.querySelectorAll("[name=fServicio]:checked")].map(x => x.value);
+}
+
+function reiniciarToques(){ toques = 0; clearTimeout(reloj); pintarBoton(); }
+function pintarBoton(){
+  const b = document.getElementById("alarma"); if (!b) return;
+  const faltan = 3 - toques;
+  b.className = "boton-alarma" + (toques ? " paso-" + toques : "");
+  b.innerHTML = toques === 0 ? `${icono("alerta")} Convocar a todos<small>Tocá 3 veces para activar</small>`
+    : `${icono("alerta")} Tocá ${faltan} ${faltan === 1 ? "vez" : "veces"} más<small>Se cancela si esperás unos segundos</small>`;
+  document.querySelectorAll(".puntos-confirmacion i").forEach((p, i) => p.classList.toggle("on", i < toques));
+}
+
+async function tocar(){
+  if (enviando) return;
+  leerForm();
+  if (eleccion === "nuevo" && (form.titulo.trim().length < 3 || !form.servicios.length)) { reiniciarToques(); return App.aviso("Completá el título y al menos un servicio del INC nuevo", 3500); }
+  if (eleccion === "nuevo" && !clasif().categorias.some(c => c.prioridad === form.prio && c.grave === form.grave)) { reiniciarToques(); return App.aviso("Esa combinación de prioridad e incidente mayor no tiene categoría", 3500); }
+  toques++;
+  clearTimeout(reloj);
+  if (toques < 3) { pintarBoton(); reloj = setTimeout(reiniciarToques, 6000); navigator.vibrate?.(60); return; }
+  enviando = true; pintarBoton(); navigator.vibrate?.([80, 60, 160]);
+  const body = { confirmaciones:3, motivo:form.motivo,
+    ...(eleccion === "nuevo" ? { nuevo:{ titulo:form.titulo, prioridad_tipo:form.prio, grave:form.grave, servicios:form.servicios } } : { inc:eleccion }) };
+  const r = await App.api("POST", "/convocatorias", body);
+  enviando = false; reiniciarToques();
+  if (!r.cuerpo.ok) return App.aviso(r.cuerpo.error.mensaje, 5000);
+  App.aviso(`Convocatoria enviada a ${r.cuerpo.data.convocados} personas`, 3000);
+  setTimeout(() => location.href = "debate.html?id=" + encodeURIComponent(r.cuerpo.data.debate.id), 700);
+}
+
+App.iniciar({
+  id: "convocatoria",
+  titulo: "Convocatoria general",
+  render: () => {
+    leerForm();
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando…", "reloj") });
+    if (!datos.puede_convocatoria_general) return C.tarjeta({ cuerpo: C.vacio("La convocatoria general es solo para Administradores y Jefes/Gestores.", "alerta") });
+    const K = clasif(); form.prio ||= K.prioridades[0]?.id || ""; form.grave ||= K.graves[0]?.id || "";
+    const cat = K.categorias.find(c => c.prioridad === form.prio && c.grave === form.grave);
+    const opciones = datos.incidentes.map(i => `<label><input type="radio" name="inc" value="${esc(i.inc)}" ${eleccion === i.inc ? "checked" : ""} data-accion="c:elegir:${esc(i.inc)}">
+      <span><b>${esc(i.titulo)}</b><small>${esc(i.inc)} · ${C.chipInc(i.prioridad)} · ${esc(i.equipos.map(e => e.nombre).join(", ") || "sin equipo")}${i.debate ? ` · ${i.debate.participantes_total} en el chat` : ""}</small></span></label>`).join("");
+    const nuevo = eleccion !== "nuevo" ? "" : `<div class="card" style="margin-top:4px">
+      <label class="campo"><span>Título del INC</span><input id="fTitulo" value="${esc(form.titulo)}" placeholder="Ej.: Caída masiva de datos móviles AMBA" maxlength="200"></label>
+      <label class="campo"><span>Prioridad</span><select id="fPrio" data-cambia>${K.prioridades.map(x => `<option value="${esc(x.id)}" ${x.id === form.prio ? "selected" : ""}>${esc(x.nombre)}</option>`).join("")}</select></label>
+      <label class="campo"><span>Incidente mayor</span><select id="fGrave" data-cambia>${K.graves.map(x => `<option value="${esc(x.id)}" ${x.id === form.grave ? "selected" : ""}>${esc(x.nombre)}</option>`).join("")}</select></label>
+      <p class="cambio" style="margin:-4px 0 12px">Categoría: ${cat ? C.chipInc(cat.p) : "<b>esa combinación no tiene categoría</b>"}</p>
+      <fieldset class="campo"><legend>Servicios afectados</legend><div class="opciones">${datos.servicios.map(s =>
+        `<label class="opcion"><input type="checkbox" name="fServicio" value="${esc(s.id)}" ${form.servicios.includes(s.id) ? "checked" : ""}>${esc(s.nombre)} · ${esc(s.red)}</label>`).join("")}</div></fieldset>
+    </div>`;
+    return `
+      ${C.tarjeta({ titulo:"1 · Incidente", iconoTit:"alerta", cuerpo:`<div class="selector-inc">${opciones}
+        <label><input type="radio" name="inc" value="nuevo" ${eleccion === "nuevo" ? "checked" : ""} data-accion="c:elegir:nuevo"><span><b class="ic-txt">${icono("mas")}Crear un INC nuevo</b><small>Se da de alta y se abre su chat</small></span></label></div>${nuevo}` })}
+      ${C.tarjeta({ titulo:"2 · Mensaje", iconoTit:"mensaje", cuerpo:`<label class="campo" style="margin:0"><textarea id="fMotivo" maxlength="300" placeholder="Ej.: Todos al chat del INC, necesitamos diagnóstico ya">${esc(form.motivo)}</textarea></label>
+        <div class="btns"><button class="boton chico" data-accion="c:sugerido">${icono("nota")}Usar mensaje sugerido</button></div>` })}
+      ${C.tarjeta({ titulo:"3 · Convocar", iconoTit:"campana", cuerpo:`
+        <p class="cambio" style="margin:0 0 10px">Se suma a <b>todos los usuarios</b> al chat del INC y les llega la notificación de convocatoria general por la app y por correo, también a los jefes de varios equipos.</p>
+        <button class="boton-alarma" id="alarma" data-accion="c:tocar"></button>
+        <div class="puntos-confirmacion"><i></i><i></i><i></i></div>` })}`;
+  },
+  alMontar: () => { if (!datos && !error) cargar(); pintarBoton(); document.querySelectorAll("[data-cambia]").forEach(el => el.onchange = () => { leerForm(); App.redibujar(); }); },
+  accion: id => {
+    if (id === "c:tocar") { tocar(); return true; }
+    if (id === "c:sugerido") {        // texto armado con el INC elegido; se puede editar antes de convocar
+      leerForm();
+      const i = datos?.incidentes.find(x => x.inc === eleccion);
+      const titulo = i ? `${i.inc} (${i.titulo})` : form.titulo.trim() || "el INC nuevo";
+      form.motivo = `Todos al chat de ${titulo}. Necesitamos diagnóstico, responsable y próximo paso ya.`;
+      const t = document.getElementById("fMotivo"); if (t) t.value = form.motivo;   // el redibujo vuelve a leer el formulario
+      App.redibujar(); return true;
+    }
+    if (id.startsWith("c:elegir:")) { leerForm(); eleccion = id.slice(9); reiniciarToques(); App.redibujar(); return true; }
+  }
+});
+</script>
+</body>
+</html>

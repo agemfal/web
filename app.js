@@ -7,8 +7,8 @@
 
 /* ===== CONFIGURACIÓN GENERAL ===== */
 const CONFIG = {
-  MODO_DATOS:   "local",       // "local" = PRUEBAS (datos de demo en el navegador) | "api" = PRODUCCIÓN
-  URL_API:      "/api",        // solo modo "api"
+  MODO_DATOS:   "api",       // "local" = PRUEBAS (datos de demo en el navegador) | "api" = PRODUCCIÓN
+  URL_API:      "https://br-lively-lake-bd089ovn-nocapi.compute.c-8.us-east-2.aws.neon.tech/api",        // solo modo "api"
   URL_LOGIN:    "login.html",
   REFRESCO_SEG: 10,            // auto-actualización (0 = desactivada)
   // Demo → n8n: si tiene una URL (o se carga en Perfil), los cambios de categoría de un INC también se mandan

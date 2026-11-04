@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Debate</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* DEBATE — chat del incidente: mensajes, fotos, archivos, notas y fijados, con la info del INC a mano.
+   Qué se puede hacer (escribir, adjuntar, fijar, unirse, salir, cerrar, eliminar) lo decide el backend. */
+const ID = new URLSearchParams(location.search).get("id");
+let deb = null, error = null, firma = "", verParticipantes = false, adjunto = null, primeraVez = true;
+let tab = null;               // Ficha de INC: "resumen" | "chat" | "equipos" | "historial"
+const imagenes = {};          // id adjunto → data URL (cache de la página)
+
+const horaCorta = iso => new Date(iso).toLocaleTimeString("es-AR", { hour:"2-digit", minute:"2-digit" });
+const fechaCorta = iso => new Date(iso).toLocaleDateString("es-AR", { day:"2-digit", month:"2-digit" });
+const peso = n => n > 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1e3)) + " KB";
+const abajo = () => innerHeight + scrollY >= document.body.scrollHeight - 160;
+
+async function recargar(forzarAbajo = false){
+  const r = await App.api("GET", "/debates/" + encodeURIComponent(ID));
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  const nuevo = r.cuerpo.ok ? r.cuerpo.data.debate : null;
+  const f = nuevo ? JSON.stringify([nuevo.estado, nuevo.participantes.map(p => p.id), nuevo.mensajes.map(m => [m.id, m.eliminado, m.fijado]), nuevo.acciones.map(a => a.accion),
+    (nuevo.incidente?.equipos || []).map(e => [e.estado, e.asignado?.id, e.escalamiento?.nivel, e.escalamiento?.estado]),
+    nuevo.incidente?.prioridad, nuevo.incidente?.sla?.vencido, nuevo.incidente?.sla?.riesgo]) : error;
+  if (f === firma && !forzarAbajo) return;              // sin cambios: no se redibuja (no se pierde lo que estás escribiendo)
+  const estabaAbajo = abajo() || !deb;
+  firma = f; deb = nuevo;
+  App.redibujar();
+  redactor();
+  cargarImagenes();
+  if (primeraVez && deb) {     // pestaña inicial: Chat si hay no leídos o viene de una notificación; Resumen si viene de "Abrir"
+    const aMensaje = /^#m-/.test(location.hash);
+    tab = aMensaje || deb.no_leidos ? "chat" : new URLSearchParams(location.search).get("info") === "1" ? "resumen" : "chat";
+    App.redibujar(); redactor(); cargarImagenes();
+    if (aMensaje) { primeraVez = false; requestAnimationFrame(() => irA(location.hash.slice(3))); return; }
+  }
+  primeraVez = false;
+  if (estabaAbajo || forzarAbajo) requestAnimationFrame(() => scrollTo({ top:document.body.scrollHeight }));
+}
+
+// Las imágenes se piden aparte (como en producción, donde viven en el almacenamiento de adjuntos)
+async function cargarImagenes(){
+  if (!deb?.puede_leer) return;
+  for (const m of deb.mensajes.filter(m => m.tipo === "imagen" && m.adjunto && !imagenes[m.adjunto.id])) {
+    const r = await App.api("GET", `/debates/${encodeURIComponent(ID)}/adjuntos/${m.adjunto.id}`);
+    if (!r.cuerpo.ok) continue;
+    imagenes[m.adjunto.id] = r.cuerpo.data.adjunto.datos;
+    const el = document.querySelector(`img[data-adj="${m.adjunto.id}"]`);
+    if (el) el.src = imagenes[m.adjunto.id];
+  }
+}
+
+// Resalta @usuario de las personas mencionadas
+function conMenciones(m){
+  let t = esc(m.texto);
+  for (const e of m.menciones_equipos || []) t = t.replace(new RegExp(`@${e.alias}(?![\\w.-])`, "gi"), `<b class="mencion equipo" title="Equipo ${esc(e.nombre)}">@${esc(e.alias)}</b>`);
+  for (const u of m.menciones || []) t = t.replace(new RegExp(`@${u.username.replace(/[.]/g, "\\.")}(?![\\w.-])`, "gi"), `<b class="mencion" title="${esc(u.nombre)}">@${esc(u.username)}</b>`);
+  return t;
+}
+
+function burbuja(m, previo){
+  if (m.tipo === "sistema") return `<div class="aviso-sistema">${esc(m.texto)} · ${horaCorta(m.creado_en)}</div>`;
+  const dia = !previo || fechaCorta(previo.creado_en) !== fechaCorta(m.creado_en) ? `<div class="aviso-sistema">${fechaCorta(m.creado_en)}</div>` : "";
+  const acciones = m.acciones.map(a => `<button class="borrar" data-accion="m:${a.accion}:${esc(m.id)}">${esc(a.etiqueta)}</button>`).join("");
+  let cuerpo;
+  if (m.eliminado) cuerpo = `<span class="texto">Mensaje eliminado${m.eliminado_por ? " por " + esc(m.eliminado_por.nombre) : ""}</span>`;
+  else cuerpo = (m.tipo === "imagen" ? `<img data-adj="${esc(m.adjunto.id)}" alt="${esc(m.adjunto.nombre)}" src="${imagenes[m.adjunto.id] || ""}" data-accion="m:ver:${esc(m.adjunto.id)}">` : "")
+    + (m.tipo === "archivo" ? `<button class="archivo" data-accion="m:bajar:${esc(m.adjunto.id)}">${icono("clip")}<span>${esc(m.adjunto.nombre)} · ${peso(m.adjunto.tamano)}</span></button>` : "")
+    + (m.texto ? `<span class="texto">${conMenciones(m)}</span>` : "");
+  const marca = m.tipo === "nota" ? `<span class="marca">${icono("nota")}Nota${m.fijado ? " fijada" : ""}</span>` : m.fijado ? `<span class="marca">📌 Fijado por ${esc(m.fijado_por?.nombre || "—")}</span>` : "";
+  return `${dia}<div class="burbuja ${m.mio ? "mia" : ""} ${m.eliminado ? "borrada" : ""} ${m.tipo === "nota" ? "nota" : ""} ${m.fijado ? "fijada" : ""} ${m.me_mencionan ? "mencionado" : ""}" id="m-${esc(m.id)}">
+    <span class="autor">${esc(m.autor?.nombre || "—")}<small>${esc(ROLES_TXT[m.autor?.rol] || "")}</small></span>
+    ${marca}${cuerpo}<span class="hora">${acciones}${horaCorta(m.creado_en)}</span></div>`;
+}
+
+
+// Barra fija arriba: información del INC, fijados y nota (siempre a mano, aunque bajes en el chat)
+function barra(d){
+  if (!d.puede_leer) return "";
+  return `<div class="barra-debate">
+    <button class="boton chico" data-accion="d:fijados">${icono("pin")}Fijados${d.fijados.length ? ` <span class="pastilla" style="background:var(--acento)">${d.fijados.length}</span>` : ""}</button>
+    ${d.puede_notas ? `<button class="boton chico" data-accion="d:nota">${icono("nota")}Nota</button>` : ""}
+    ${d.puede_convocar ? `<button class="boton chico" data-accion="d:convocar">${icono("equipo")}Convocar</button>` : ""}
+  </div>`;
+}
+
+function resumenMensaje(m){
+  const contenido = m.texto ? esc(m.texto) : m.adjunto ? `${icono("clip")} ${esc(m.adjunto.nombre)}` : "";
+  return `<li class="${m.tipo === "nota" ? "warn" : "info"} alto">
+    <span class="ic">${icono(m.tipo === "nota" ? "nota" : "pin")}</span>
+    <span class="cuerpo"><b style="white-space:normal">${contenido}</b>
+      <small>${esc(m.autor?.nombre || "—")} · ${fechaCorta(m.creado_en)} ${horaCorta(m.creado_en)}${m.fijado_por ? " · fijado por " + esc(m.fijado_por.nombre) : ""}</small>
+      <span class="btns"><button class="boton chico" data-accion="h:ir:${esc(m.id)}">Ir al mensaje</button>
+      ${m.acciones.some(a => a.accion === "desfijar") ? `<button class="boton chico peligro" data-accion="h:desfijar:${esc(m.id)}">Quitar</button>` : ""}</span>
+    </span></li>`;
+}
+
+// "Unirme al INC": quien llega al chat puede tomar el INC, unirse a quien ya lo trabaja (varias personas) o sumar su equipo si no figura.
+// El backend decide qué se ofrece (acciones tomar / unirse / sumar_equipo); es la misma acción que en Incidentes.
+function bannerUnirse(d){
+  const i = d.incidente;
+  if (!i.abierto) return "";
+  return C.sumarse(i).map(o => {
+    const pendiente = App.pendientes.has(`${i.inc}:${o.id}`);
+    return `<div class="unirse-inc"><span class="txt"><b>${esc(o.estado)}</b><small>${pendiente ? "Te estás sumando: se confirma en 5 segundos." : esc(o.aviso)}</small></span>
+    ${pendiente ? `<button class="boton" data-accion="deshacer:${esc(i.inc)}:${esc(o.id)}">Deshacer</button>`
+      : `<button class="boton primario" data-accion="inc:${o.accion}:${esc(i.inc)}:${esc(o.id)}">${icono("mano")}Unirme al INC · ${esc(o.nombre)}</button>`}</div>`;
+  }).join("");
+}
+
+// Descripción del INC: vista previa de 3 líneas; el texto completo se abre en una ventana flotante
+const DESC_LARGA = 220;
+function bloqueDescripcion(d){
+  const t = d.incidente.descripcion;
+  if (!t) return C.tarjeta({ titulo:"Descripción", iconoTit:"nota", cuerpo:`<p class="cambio" style="margin:0">El INC no trae descripción.</p>` });
+  const larga = t.length > DESC_LARGA || t.split("\n").length > 3;
+  return C.tarjeta({ titulo:"Descripción", iconoTit:"nota", cuerpo:`
+    <p class="desc-previa">${esc(t.replace(/\s*\n+\s*/g, " · "))}</p>
+    ${larga ? `<div class="btns"><button class="boton chico" data-accion="d:descripcion">${icono("nota")}Ver descripción completa</button></div>` : ""}` });
+}
+function verDescripcion(){
+  const i = deb?.incidente;
+  if (!i?.descripcion) return;
+  App.ventana({ titulo:"Descripción del INC", subtitulo:`${i.inc} · ${i.titulo}`, texto:i.descripcion });
+}
+
+// Bloques de la pestaña Resumen (antes, hoja "Info del INC")
+function bloqueInfo(d){
+  const i = d.incidente;
+  const botones = d.acciones.map(a => `<button class="boton chico ${a.accion === "unirse" ? "primario" : a.accion === "cerrar" ? "peligro" : ""}" data-accion="d:${a.accion}">${esc(a.etiqueta)}</button>`).join("");
+  return C.tarjeta({ titulo:"Incidente", iconoTit:"info", cuerpo:`<dl class="ficha">
+      <dt>INC</dt><dd>${esc(i.inc)}</dd>
+      <dt>Categoría</dt><dd>${i.prioridad ? C.chipInc(i.prioridad) : "—"}${i.puede_cambiar_categoria ? ` <button class="boton chico" data-accion="cat:${esc(i.inc)}:${i.prioridad}">${icono("cambiar")}Cambiar</button>` : ""}</dd>
+      ${i.categoria?.prioridad ? `<dt>Prioridad</dt><dd>${esc(i.categoria.prioridad)}</dd><dt>Incidente mayor</dt><dd>${esc(i.categoria.grave)}</dd>` : ""}
+      ${i.sla ? `<dt>SLA</dt><dd>${C.chipSla(i.sla)} <small style="color:var(--tenue)">${i.sla.minutos} min · vence ${new Date(i.sla.vence_en).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" })}</small></dd>` : ""}
+      <dt>Estado</dt><dd>${i.abierto ? "Abierto" : "Ya no está abierto"}</dd>
+      ${i.inicio ? `<dt>Inicio</dt><dd>${new Date(i.inicio).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" })} · ${hace(i.inicio)}</dd>` : ""}
+      ${i.afectados != null ? `<dt>Afectados</dt><dd>${Number(i.afectados).toLocaleString("es-AR")} clientes</dd>` : ""}
+      <dt>Servicios</dt><dd>${i.servicios.length ? `<span class="etiquetas">${i.servicios.map(s => C.chip("info", s.nombre + (s.red ? " · " + s.red : ""))).join("")}</span>` : "—"}</dd>
+      <dt>Equipos</dt><dd>${esc(i.equipos.map(e => e.nombre).join(", ") || "—")}${i.abierto ? ` <button class="boton chico" data-accion="t:equipos">Ver quién lo tomó</button>` : ""}</dd>
+    </dl>` }) + bloqueDescripcion(d) + C.tarjeta({ titulo:"Chat del INC", iconoTit:"mensaje", cuerpo:`<dl class="ficha">
+      <dt>Estado</dt><dd>${C.chip(d.estado === "abierto" ? "ok" : "warn", d.estado_txt)}</dd>
+      <dt>Abierto por</dt><dd>${esc(d.abierto_por?.nombre || "—")} · ${hace(d.abierto_en)}</dd>
+      <dt>Participan</dt><dd><button class="boton chico" data-accion="d:participantes" aria-expanded="${verParticipantes}">${d.participantes_total} persona${d.participantes_total !== 1 ? "s" : ""} ${verParticipantes ? "▲" : "▼"}</button></dd>
+      ${d.motivo_cierre ? `<dt>Cierre</dt><dd>${esc(d.motivo_cierre)}</dd>` : ""}
+    </dl>
+    ${verParticipantes ? `<div class="etiquetas" style="margin-top:10px">${d.participantes.map(p =>
+      C.chip(p.origen === "voluntario" ? "info" : "ok", `${p.nombre}${p.es_yo ? " (vos)" : ""} · ${{ creador:"abrió", equipo:"equipo", convocado:"convocado", voluntario:"se unió" }[p.origen] || p.origen}`)).join("")}</div>` : ""}
+    ${botones ? `<div class="btns">${botones}</div>` : ""}` });
+}
+function bloqueFijados(d){
+  if (!d.puede_leer) return "";
+  return `<div id="fijados">` + C.tarjeta({ titulo:`Fijados y notas (${d.fijados.length})`, iconoTit:"pin", cuerpo:`
+    ${d.fijados.length ? `<ul class="lista">${d.fijados.map(resumenMensaje).join("")}</ul>`
+      : `<p class="cambio" style="margin:0">Nada fijado todavía. Tocá “Fijar” en un mensaje importante o agregá una nota.</p>`}
+    ${d.puede_notas ? `<div class="btns"><button class="boton chico primario" data-accion="d:nota">${icono("nota")}Agregar nota</button></div>` : ""}` }) + `</div>`;
+}
+function bloqueHistorial(d){
+  if (!d.puede_leer) return C.tarjeta({ cuerpo:C.vacio("Unite al chat para ver el historial del INC.", "historial") });
+  const ev = d.mensajes.filter(m => m.tipo === "sistema").slice().reverse();
+  return C.tarjeta({ titulo:"Historial", iconoTit:"historial", cuerpo:`
+    ${ev.length ? `<ol class="historial">${ev.map(m => `<li><small>${fechaCorta(m.creado_en)} ${horaCorta(m.creado_en)}</small>${esc(m.texto)}</li>`).join("")}</ol>` : C.vacio("Todavía no hay eventos.", "historial")}
+    ${App.puede("ver_auditoria") ? `<div class="btns"><a class="boton chico" href="auditoria.html?entidad_id=${encodeURIComponent(d.inc)}">${icono("check")}Ver auditoría completa</a></div>` : ""}` });
+}
+// Compatibilidad: lo que antes abría la hoja ahora cambia de pestaña
+function abrirHoja(que){
+  irTab("resumen");
+  if (que === "fijados") requestAnimationFrame(() => document.getElementById("fijados")?.scrollIntoView({ block:"start", behavior:"smooth" }));
+}
+function cerrarHoja(){ document.getElementById("hojaInfo")?.remove(); document.getElementById("veloHoja")?.remove(); }
+function irTab(t){
+  if (tab === t) return;
+  tab = t; App.redibujar(); redactor(); cargarImagenes();
+  scrollTo({ top: t === "chat" ? document.body.scrollHeight : 0 });
+}
+function irA(id){
+  cerrarHoja();
+  if (tab !== "chat") { tab = "chat"; App.redibujar(); redactor(); cargarImagenes(); }
+  const el = document.getElementById("m-" + id);
+  if (!el) return;
+  el.scrollIntoView({ block:"center", behavior:"smooth" });
+  el.classList.add("resaltada"); setTimeout(() => el.classList.remove("resaltada"), 1800);
+}
+async function nuevaNota(){
+  cerrarHoja();
+  const f = await App.formulario({ titulo:"Nueva nota fijada", enviar:"Fijar nota", campos:[
+    { tipo:"nota", texto:"Queda fijada arriba para que no se pierda: causa, ETA, acuerdos, contactos…" },
+    { id:"texto", etiqueta:"Nota", tipo:"textarea", requerido:true, ayuda:"Ej.: Causa probable: corte por obra vial. ETA 14:00" } ] });
+  if (!f) return;
+  const ok = await App.enviar("POST", `/debates/${encodeURIComponent(ID)}/mensajes`, { texto:f.texto, nota:true }, "Nota fijada");
+  if (ok) recargar(true);
+}
+async function convocar(){
+  // Todos los usuarios activos: los que ya participan aparecen tildados y en gris
+  const personas = [...deb.mencionables].sort((a, b) => Number(a.participante) - Number(b.participante))
+    .map(u => ({ valor:u.id, texto:`${u.nombre} · ${ROLES_TXT[u.rol] || u.rol} · ${u.equipos.map(e => (e.es_responsable ? "★ " : "") + e.nombre).join(", ") || "sin equipo"}${u.participante ? " · ya participa" : ""}`, deshabilitado:u.participante }));
+  const equipos = deb.equipos_convocables.map(t => ({ valor:t.id, texto:t.pendientes ? `${t.nombre} (${t.pendientes} sin sumar)` : `${t.nombre} · ya están todos`, deshabilitado:!t.pendientes }));
+  const faltan = personas.filter(p => !p.deshabilitado).length;
+  const f = await App.formulario({ titulo:"Convocar al debate", enviar:"Convocar", campos:[
+    { tipo:"nota", texto: faltan ? `Se suman al chat y les llega una notificación (y un correo) con el acceso directo. Podés convocar a ${faltan} persona${faltan !== 1 ? "s" : ""}.`
+                                 : "Todos los usuarios ya participan de este chat: no queda nadie por convocar." },
+    { id:"user_ids", etiqueta:"Personas", tipo:"multi", opciones:personas },
+    { id:"equipos", etiqueta:"Equipos completos", tipo:"multi", opciones:equipos },
+    { id:"mensaje", etiqueta:"Mensaje (opcional)", tipo:"textarea", ayuda:"Ej.: Necesitamos acceso al nodo de Pilar" } ] });
+  if (!f) return;
+  if (!f.user_ids.length && !f.equipos.length) return App.aviso("Elegí al menos una persona o un equipo");
+  const ok = await App.enviar("POST", `/debates/${encodeURIComponent(ID)}/convocar`, f, "Convocatoria enviada");
+  if (ok) { if (ok.sin_cambios) App.aviso("Ya participaban todos"); recargar(true); }
+}
+
+async function fijar(accion, id){
+  const ok = await App.enviar("POST", `/debates/${encodeURIComponent(ID)}/mensajes/${id}/${accion}`, {}, accion === "fijar" ? "Mensaje fijado" : "Quitado de fijados");
+  if (ok) await recargar();
+  return ok;
+}
+
+// Barra para escribir: fuera de <main> para que los refrescos no borren lo que estás escribiendo
+function redactor(){
+  let r = document.getElementById("redactor");
+  const puede = !!deb?.puede_escribir;
+  document.body.classList.toggle("con-redactor", puede && tab === "chat");
+  if (!puede) { r?.remove(); return; }
+  if (r) { r.hidden = tab !== "chat"; if (r.hidden) return; }
+  if (!r) {
+    document.body.insertAdjacentHTML("beforeend", `<form class="redactor" id="redactor">
+      <div class="previa" id="previa" hidden></div>
+      <div class="sugerencias" id="sugerencias" hidden></div>
+      <div class="fila">
+        <button type="button" class="btn-icono" id="btnAdjuntar" aria-label="Adjuntar foto o archivo">${icono("clip")}</button>
+        <input type="file" id="archivo" hidden accept="image/*,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx">
+        <textarea id="texto" rows="1" placeholder="Escribí un mensaje…" maxlength="4000"></textarea>
+        <button type="submit" class="btn-icono enviar" aria-label="Enviar">${icono("enviar")}</button>
+      </div></form>`);
+    r = document.getElementById("redactor");
+    const t = document.getElementById("texto"), arch = document.getElementById("archivo");
+    t.addEventListener("input", () => { t.style.height = "auto"; t.style.height = Math.min(120, t.scrollHeight) + "px"; sugerir(); });
+    // Teclado en PC: flechas para elegir, Enter o Tab para insertar, Esc para cerrar
+    t.addEventListener("keydown", ev => {
+      const caja = document.getElementById("sugerencias");
+      if (caja.hidden || !sug.lista.length) return;
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); sug.sel = (sug.sel + (ev.key === "ArrowDown" ? 1 : -1) + sug.lista.length) % sug.lista.length; pintarSugerencias(); }
+      else if (ev.key === "Enter" || ev.key === "Tab") { ev.preventDefault(); ev.stopImmediatePropagation(); insertarMencion(sug.lista[sug.sel].username); }
+      else if (ev.key === "Escape") caja.hidden = true;
+    }, true);
+    document.addEventListener("click", ev => { if (!ev.target.closest("#redactor")) document.getElementById("sugerencias").hidden = true; });
+    t.addEventListener("keydown", ev => { if (ev.key === "Enter" && !ev.shiftKey && matchMedia("(pointer:fine)").matches) { ev.preventDefault(); r.requestSubmit(); } });
+    document.getElementById("btnAdjuntar").onclick = () => arch.click();
+    arch.onchange = async () => { if (arch.files[0]) { adjunto = await preparar(arch.files[0]); mostrarPrevia(); } arch.value = ""; };
+    r.onsubmit = enviar;
+  }
+  document.getElementById("btnAdjuntar").hidden = !deb.puede_adjuntar;
+}
+// @menciones estilo WhatsApp: al escribir "@" aparece la lista (participantes primero) y se filtra mientras escribís
+const sug = { lista:[], sel:0, q:"" };
+const COLORES = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db61a2", "#39c5cf", "#e3803a"];
+const colorDe = id => COLORES[[...String(id)].reduce((n, c) => n + c.charCodeAt(0), 0) % COLORES.length];
+const iniciales = n => String(n).split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0].toUpperCase()).join("");
+const resaltar = (txt, q) => { const s = String(txt), i = q ? s.toLowerCase().indexOf(q) : -1;
+  return i < 0 ? esc(s) : esc(s.slice(0, i)) + `<mark>${esc(s.slice(i, i + q.length))}</mark>` + esc(s.slice(i + q.length)); };
+const sinTildes = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+function sugerir(){
+  const t = document.getElementById("texto"), caja = document.getElementById("sugerencias");
+  const m = /(^|\s)@([\w.\u00C0-\u017F-]*)$/.exec(t.value.slice(0, t.selectionStart));
+  if (!m || !deb) { caja.hidden = true; return; }
+  const q = sinTildes(m[2]);
+  sug.q = m[2].toLowerCase();
+  const equipos = deb.equipos_mencionables.filter(t => !q || t.alias.includes(q) || sinTildes(t.nombre).includes(q)).map(t => ({ ...t, esEquipo:true, username:t.alias }));
+  sug.lista = deb.mencionables.filter(u => !q || u.username.includes(q) || sinTildes(u.nombre).split(/\s+/).some(p => p.startsWith(q)) || sinTildes(u.nombre).includes(q)
+      || u.equipos.some(e => sinTildes(e.nombre).includes(q)))
+    .sort((a, b) => Number(b.participante) - Number(a.participante) || a.nombre.localeCompare(b.nombre, "es")).slice(0, 8);
+  sug.lista = q ? [...equipos, ...sug.lista] : [...sug.lista, ...equipos];   // si escribís el equipo, aparece primero
+  sug.sel = 0;
+  if (!sug.lista.length) { caja.innerHTML = `<div class="sin-resultados">Nadie coincide con “@${esc(m[2])}”</div>`; caja.hidden = false; return; }
+  pintarSugerencias();
+}
+function pintarSugerencias(){
+  const caja = document.getElementById("sugerencias");
+  caja.innerHTML = sug.lista.map((u, i) => u.esEquipo ? `<button type="button" class="${i === sug.sel ? "activa" : ""}" data-u="${esc(u.alias)}">
+      <span class="avatar grupo">${icono("equipo")}</span>
+      <span class="quien"><b>@${resaltar(u.alias, sug.q)} · ${resaltar(u.nombre, sug.q)}</b><small>Equipo · avisa a ${u.avisados} persona${u.avisados !== 1 ? "s" : ""}</small>
+        ${u.sin_aviso.length ? `<small class="equipos-u">No suena a: ${esc(u.sin_aviso.join(", "))} (jefes de varios equipos)</small>` : ""}</span>
+    </button>` : `<button type="button" class="${i === sug.sel ? "activa" : ""}" data-u="${esc(u.username)}">
+      <span class="avatar" style="background:${colorDe(u.id)}">${esc(iniciales(u.nombre))}</span>
+      <span class="quien"><b>${resaltar(u.nombre, sug.q)}</b><small>@${resaltar(u.username, sug.q)} · ${esc(ROLES_TXT[u.rol] || u.rol)}${u.participante ? "" : " · <em>no participa: se le avisa</em>"}</small>
+        <small class="equipos-u">${u.equipos.length ? u.equipos.map(e => (e.es_responsable ? "★ " : "") + resaltar(e.nombre, sug.q)).join(" · ") : "Sin equipo"}</small></span>
+    </button>`).join("");
+  caja.hidden = false;
+  caja.querySelectorAll("button").forEach(b => {
+    b.addEventListener("mousedown", ev => ev.preventDefault());          // PC: no saca el foco del cuadro de texto
+    b.addEventListener("click", () => insertarMencion(b.dataset.u));      // celular y PC
+  });
+  caja.querySelector(".activa")?.scrollIntoView({ block:"nearest" });
+}
+function insertarMencion(username){
+  const t = document.getElementById("texto"), caja = document.getElementById("sugerencias");
+  const pos = t.selectionStart ?? t.value.length;
+  const antes = t.value.slice(0, pos).replace(/@([\w.\u00C0-\u017F-]*)$/, "@" + username + " ");
+  t.value = antes + t.value.slice(pos);
+  caja.hidden = true;
+  t.focus(); t.selectionStart = t.selectionEnd = antes.length;
+}
+
+function mostrarPrevia(){
+  const p = document.getElementById("previa");
+  p.hidden = !adjunto;
+  p.innerHTML = adjunto ? `${icono("clip")}<span>${esc(adjunto.nombre)} · ${peso(Math.round(adjunto.datos.length * 0.75))}</span><button type="button" id="quitarAdj">Quitar</button>` : "";
+  if (adjunto) document.getElementById("quitarAdj").onclick = () => { adjunto = null; mostrarPrevia(); };
+}
+
+// Las fotos se achican antes de enviar (máx. 1600 px, JPEG): viajan livianas y se ven nítidas
+const leer = f => new Promise((ok, mal) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = mal; fr.readAsDataURL(f); });
+async function preparar(f){
+  if (/^image\/(jpeg|png|webp)$/.test(f.type)) {
+    try {
+      const img = await createImageBitmap(f), k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = Object.assign(document.createElement("canvas"), { width:Math.round(img.width * k), height:Math.round(img.height * k) });
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      return { nombre:f.name.replace(/\.\w+$/, "") + ".jpg", tipo:"image/jpeg", datos:c.toDataURL("image/jpeg", 0.8) };
+    } catch {}
+  }
+  return { nombre:f.name, tipo:f.type || "application/octet-stream", datos:await leer(f) };
+}
+
+async function enviar(ev){
+  ev.preventDefault();
+  const t = document.getElementById("texto"), boton = ev.target.querySelector(".enviar");
+  if (!t.value.trim() && !adjunto) return;
+  boton.disabled = true;
+  const r = await App.api("POST", `/debates/${encodeURIComponent(ID)}/mensajes`, { texto:t.value, adjunto });
+  boton.disabled = false;
+  if (!r.cuerpo.ok) return App.aviso(r.cuerpo.error.mensaje, 4500);
+  t.value = ""; t.style.height = "auto"; adjunto = null; mostrarPrevia();
+  recargar(true);
+}
+
+async function bajar(id){
+  const r = await App.api("GET", `/debates/${encodeURIComponent(ID)}/adjuntos/${id}`);
+  if (!r.cuerpo.ok) return App.aviso(r.cuerpo.error.mensaje);
+  const a = Object.assign(document.createElement("a"), { href:r.cuerpo.data.adjunto.datos, download:r.cuerpo.data.adjunto.nombre });
+  document.body.append(a); a.click(); a.remove();
+}
+function verImagen(id){
+  if (!imagenes[id]) return;
+  document.body.insertAdjacentHTML("beforeend", `<div class="visor" id="visor"><img src="${imagenes[id]}" alt=""></div>`);
+  document.getElementById("visor").onclick = e => e.currentTarget.remove();
+}
+
+async function accionDebate(a){
+  let body = {};
+  if (a === "cerrar") {
+    const f = await App.formulario({ titulo:"Cerrar chat", enviar:"Cerrar", peligro:true,
+      campos:[{ tipo:"nota", texto:"Nadie más podrá escribir. El historial queda guardado." }, JUSTIFICACION] });
+    if (!f) return;
+    body = f;
+  }
+  const ok = await App.enviar("POST", `/debates/${encodeURIComponent(ID)}/${a}`, body,
+    { unirse:"Te uniste al chat", salir:"Saliste del chat", cerrar:"Chat cerrado" }[a]);
+  if (ok) recargar(true);
+}
+
+App.iniciar({
+  id: "incidentes",
+  titulo: new URLSearchParams(location.search).get("id") ? "Ficha del INC" : "Chat del INC",
+  render: () => {
+    if (!ID) return C.tarjeta({ cuerpo: C.vacio("Falta el chat. Entrá desde Incidentes, Chats o Servicios.", "alerta") });
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!deb) return C.tarjeta({ cuerpo: C.vacio("Cargando chat…", "reloj") });
+    const chat = deb.puede_leer
+      ? `<div class="chat">${deb.mensajes.map((m, i) => burbuja(m, deb.mensajes.slice(0, i).reverse().find(x => x.tipo !== "sistema"))).join("")}</div>`
+      : C.tarjeta({ cuerpo: C.vacio("No participás de este chat. Unite para leer y escribir.", "mensaje") });
+    const pie = deb.puede_leer && !deb.puede_escribir
+      ? `<p class="cambio" style="text-align:center">${deb.estado !== "abierto" ? "El chat está cerrado." : deb.soy_participante ? "Tu rol es de solo lectura: podés leer pero no escribir." : "Estás leyendo como Administrador. Unite para escribir."}</p>` : "";
+    const i = deb.incidente, t = tab || "chat";
+    const pendientes = (i.equipos || []).filter(e => e.estado === "pendiente").length;
+    const PEST = [["resumen", "Resumen", 0], ["chat", "Chat", deb.no_leidos || 0], ["equipos", "Equipos", i.abierto ? pendientes : 0], ["historial", "Historial", 0]];
+    const contenido = t === "resumen" ? bloqueInfo(deb) + bloqueFijados(deb)
+      : t === "equipos" ? C.tarjeta({ titulo:"Equipos · ¿quién lo tomó?", iconoTit:"equipo", cuerpo: i.abierto ? C.equiposInc(i) : C.vacio("El INC ya no está abierto.", "info") })
+      : t === "historial" ? bloqueHistorial(deb)
+      : `${barra(deb)}${chat}${pie}`;
+    return `<button class="boton chico" data-accion="volver" style="justify-self:start">← Volver</button>
+      <div class="ficha-cab"><h2>${esc(deb.titulo)}</h2>
+        <div class="tinc-meta"><span class="mono-inc">${esc(deb.inc)}</span>${deb.prioridad ? C.chipInc(deb.prioridad) : ""}${C.chipSla(i.sla)}${C.chip(deb.estado === "abierto" ? "ok" : "warn", "Chat " + deb.estado_txt.toLowerCase())}</div></div>
+      ${bannerUnirse(deb)}
+      <div class="pestanas" role="tablist">${PEST.map(([id, txt, n]) => `<button role="tab" aria-selected="${t === id}" class="${t === id ? "activa" : ""}" data-accion="t:${id}">${txt}${n ? ` <span class="pastilla" ${id === "chat" ? 'style="background:var(--ok);color:var(--sobre-ok)"' : 'style="background:var(--warn);color:var(--sobre-warn)"'}>${n}</span>` : ""}</button>`).join("")}</div>
+      ${contenido}`;
+  },
+  alMontar: () => { if (!deb && !error && ID && !firma) { firma = "…"; recargar(true); } },
+  // Tomar / Reconocer desde la hoja de info: se recarga y, si la hoja estaba abierta, se redibuja
+  alCambiarInc: async () => { firma = ""; await recargar(); },
+  accion: id => {
+    if (id === "volver") { document.referrer.startsWith(location.origin) && history.length > 1 ? history.back() : (location.href = "incidentes.html"); return true; }
+    const [p, a, x] = id.split(":");
+    if (p === "t") { irTab(a); return true; }
+    if (p === "d" && a === "participantes") { verParticipantes = !verParticipantes; App.redibujar(); cargarImagenes(); return true; }
+    if (p === "d" && (a === "info" || a === "fijados")) { abrirHoja(a); return true; }
+    if (p === "d" && a === "descripcion") { verDescripcion(); return true; }
+    if (p === "d" && a === "nota") { nuevaNota(); return true; }
+    if (p === "d" && a === "convocar") { convocar(); return true; }
+    if (p === "h" && a === "cerrar") { cerrarHoja(); return true; }
+    if (p === "h" && a === "ir") { irA(x); return true; }
+    if (p === "h" && a === "desfijar") { fijar("desfijar", x).then(ok => ok && abrirHoja("fijados")); return true; }
+    if (p === "m" && (a === "fijar" || a === "desfijar")) { fijar(a, x); return true; }
+    if (p === "d") { accionDebate(a); return true; }
+    if (p === "m" && a === "eliminar") { App.enviar("POST", `/debates/${encodeURIComponent(ID)}/mensajes/${x}/eliminar`, {}, "Mensaje eliminado").then(ok => ok && recargar()); return true; }
+    if (p === "m" && a === "bajar") { bajar(x); return true; }
+    if (p === "m" && a === "ver") { verImagen(x); return true; }
+  }
+});
+setInterval(() => { if (!document.hidden && ID) recargar(); }, 3000);
+</script>
+</body>
+</html>

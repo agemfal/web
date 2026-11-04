@@ -1,7 +1,5 @@
-# NOC · demo
+# NOC
 
-Demo de las pantallas del NOC con **datos ficticios**. Todo corre en el navegador: no se conecta a ninguna base ni servidor.
-
-Entrar: `login.html` · usuarios de prueba `ana`, `bruno`, `carla`, `admin` · clave `demo123`.
+Pantallas del NOC conectadas a su API. No contienen datos: todo se pide a la API después de iniciar sesión.
 
 Este repositorio se genera automáticamente; no editar a mano.

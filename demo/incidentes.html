@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Incidentes</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* INCIDENTES — INC abiertos: quién lo tomó en cada equipo (Tomar) y su chat. Filtros y buscador. */
+let datos = null, error = null, cargando = false, busqueda = "";
+let filtro = new URLSearchParams(location.search).get("filtro") || "todos";   // llega desde los indicadores del Escritorio
+const FILTROS = [
+  ["todos", "Todos", () => true],
+  ["crit", "Críticos", i => sevInc(i.prioridad) === "crit"],
+  ["vencidos", "SLA vencido", i => !!i.sla?.vencido],
+  ["riesgo", "SLA en riesgo", i => !!i.sla?.riesgo && !i.sla.vencido],
+  ["escalando", "Escalando", i => !!i.escalado],
+  ["mios", "Míos", i => !!i.mio],
+  ["sintomar", "Sin tomar", i => i.equipos.some(e => e.estado === "pendiente")] ];
+if (!FILTROS.some(f => f[0] === filtro)) filtro = "todos";
+
+async function recargar(){
+  if (cargando) return;
+  cargando = true;
+  const r = await App.api("GET", "/debates");
+  cargando = false;
+  error = r.cuerpo.ok ? null : r.cuerpo.error.mensaje;
+  datos = r.cuerpo.ok ? r.cuerpo.data : null;
+  App.redibujar();
+}
+
+const sev = p => sevInc(p);
+// Cada INC con la tarjeta única (nivel 2): categoría, SLA, equipos, último mensaje y la acción principal
+const liIncidente = i => `<li class="sin-borde">${C.tarjetaInc(i)}</li>`;
+function liOtro(d){
+  return `<li class="info alto clic" data-accion="d:ver:${esc(d.id)}">
+    <span class="ic">${icono("mensaje")}</span>
+    <span class="cuerpo"><b>${esc(d.titulo)}</b><small>${esc(d.inc)} · ${esc(d.estado_txt)} · ${d.mensajes_total} mensajes</small></span>
+    ${d.no_leidos ? `<span class="pastilla">${d.no_leidos}</span>` : ""}
+  </li>`;
+}
+
+async function abrir(inc){
+  const r = await App.api("POST", "/debates", { inc });
+  if (r.cuerpo.ok) return location.href = "debate.html?id=" + encodeURIComponent(r.cuerpo.data.debate.id);
+  if (r.cuerpo.error.codigo === "DEBATE_YA_EXISTE") return location.href = "debate.html?id=" + encodeURIComponent(r.cuerpo.error.detalle.debate_id);
+  App.aviso(r.cuerpo.error.mensaje, 4000);
+}
+
+App.iniciar({
+  id: "incidentes",
+  titulo: "Incidentes",
+  render: () => {
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando incidentes…", "reloj") });
+    const q = busqueda.trim().toLowerCase();
+    const busca = i => !q || [i.inc, i.titulo, ...i.servicios, ...i.equipos.map(e => e.nombre), i.categoria?.nombre].some(x => String(x || "").toLowerCase().includes(q));
+    const pasa = FILTROS.find(f => f[0] === filtro)[2];
+    const vis = datos.incidentes.filter(i => pasa(i) && busca(i));
+    return `
+      <label class="buscador-chat">${icono("buscar")}<input id="fBuscar" type="search" placeholder="Buscar INC, título, servicio o equipo" value="${esc(busqueda)}" autocomplete="off" aria-label="Buscar incidentes"></label>
+      <div class="filtros">${FILTROS.map(([id, t, f]) => { const n = datos.incidentes.filter(f).length;
+        return `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}" aria-pressed="${filtro === id}">${t} <span class="num">${n}</span></button>`; }).join("")}</div>
+      ${C.tarjeta({ titulo:`INC abiertos (${vis.length}${vis.length !== datos.incidentes.length ? " de " + datos.incidentes.length : ""})`, iconoTit:"alerta",
+        cuerpo: vis.length ? `<ul class="lista-tinc">${vis.map(liIncidente).join("")}</ul>`
+          : C.vacio(datos.incidentes.length ? (q ? "Ningún INC coincide con la búsqueda" : "Ningún INC en este filtro") : "No hay incidentes abiertos") })}
+      ${datos.otros_debates.length ? C.tarjeta({ titulo:"Chats de INC cerrados", iconoTit:"mensaje", cuerpo:`<ul class="lista">${datos.otros_debates.map(liOtro).join("")}</ul>` }) : ""}`;
+  },
+  alMontar: () => {
+    if (!datos && !error) recargar();
+    const b = document.getElementById("fBuscar");
+    if (b) b.oninput = () => { busqueda = b.value; const pos = b.selectionStart; App.redibujar(); const n = document.getElementById("fBuscar"); n.focus(); n.setSelectionRange(pos, pos); };
+  },
+  alCambiarInc: () => recargar(),
+  accion: id => {
+    const [p, a, x] = id.split(":");
+    if (p === "f") { filtro = a; history.replaceState(null, "", filtro === "todos" ? "incidentes.html" : "incidentes.html?filtro=" + filtro); App.redibujar(); return true; }
+    if (p !== "d") return;
+    if (a === "ver") location.href = "debate.html?id=" + encodeURIComponent(x);
+    if (a === "abrir") abrir(x);
+    return true;
+  }
+});
+setInterval(() => { if (!document.hidden && document.activeElement?.id !== "fBuscar") recargar(); }, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<title>Matrices de escalamiento</title>
+<script src="ux.js?v=1"></script>
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<main id="app"></main>
+<script src="rbac-demo.js?v=31"></script>
+<script src="app.js"></script>
+<script>
+/* MATRICES DE ESCALAMIENTO — se edita el orden (niveles, esperas, canales y destinatarios)
+   de un equipo, o se aplica la misma matriz a varios equipos o a todos juntos.
+   Cada guardado crea una versión nueva; el backend valida todo y decide qué equipos puede tocar cada uno. */
+let datos = null, error = null, admins = [], modo = "uno", equipoId = "", marcados = new Set(), niveles = [], justificacion = "", guardando = false, gen = 0, abierto = null;   // abierto = nivel desplegado en la línea de tiempo
+const CANAL_TXT = { app:"App", email:"Correo", telegram:"Telegram", llamada:"Llamada" };
+const ROL_DEST_TXT = { OPERADOR:"Operadores", GESTOR:"Jefes/Gestores", LECTURA:"Solo lectura" };
+const copia = x => JSON.parse(JSON.stringify(x));
+const editables = () => (datos?.equipos || []).filter(t => t.puede_editar && t.estado === "activo");
+const eq = id => datos.equipos.find(t => t.id === id);
+const resumen = ns => ns.map(n => `N${n.nivel || ""} ${n.espera_min}′`).join(" → ");
+
+async function cargar(){
+  const e = await App.api("GET", "/equipos");
+  error = e.cuerpo.ok ? null : e.cuerpo.error.mensaje;
+  datos = e.cuerpo.ok ? e.cuerpo.data : null;
+  admins = datos?.admins_destino || [];
+  if (datos && !equipoId) {
+    const pedido = new URLSearchParams(location.search).get("equipo");
+    const lista = editables();
+    equipoId = lista.some(t => t.id === pedido) ? pedido : lista[0]?.id || "";
+    if (new URLSearchParams(location.search).get("modo") === "todos") { modo = "varios"; lista.forEach(t => marcados.add(t.id)); }
+    cargarDe(equipoId);
+  }
+  App.redibujar();
+}
+
+// Copia la matriz de un equipo al editor (sirve también como plantilla para el resto)
+function cargarDe(id){
+  gen++;
+  const t = id && eq(id);
+  niveles = t?.matriz ? copia(t.matriz.niveles).map(({ espera_min, canales, destinos, horario }) => ({ espera_min, canales, horario:horario || null,
+    destinos:destinos.map(d => d.tipo === "rol" ? { tipo:"rol", rol:d.rol } : { tipo:"usuario", id:d.id }) }))
+    : [{ espera_min:5, canales:["app"], destinos:[{ tipo:"rol", rol:"OPERADOR" }] }];
+}
+
+// Lo escrito en pantalla pasa al estado antes de cada redibujo
+function leer(){
+  document.querySelectorAll("[data-nivel]").forEach(el => {
+    if (Number(el.dataset.gen) !== gen) return;   // pantalla vieja (se reordenó o cambió de equipo)
+    const n = niveles[Number(el.dataset.nivel)]; if (!n) return;
+    n.espera_min = Number(el.querySelector("[name=espera]").value);
+    n.canales = [...el.querySelectorAll("[name=canal]:checked")].map(x => x.value);
+    n.destinos = [...el.querySelectorAll("[name=destino]:checked")].map(x => {
+      const [tipo, v] = x.value.split(":"); return tipo === "rol" ? { tipo, rol:v } : { tipo, id:v }; });
+    const modoF = el.querySelector("[name=franja]")?.value;
+    if (modoF === "siempre") n.horario = null;
+    else if (modoF === "franjas") {
+      const dias = el.querySelector("[name=dia]") ? [...el.querySelectorAll("[name=dia]:checked")].map(x => Number(x.value)) : [1, 2, 3, 4, 5];
+      n.horario = { modalidad:"franjas", zona_horaria:"America/Argentina/Buenos_Aires",
+        franjas:[{ dias, desde:el.querySelector("[name=desde]")?.value || "08:00", hasta:el.querySelector("[name=hasta]")?.value || "20:00" }] };
+    }
+  });
+  const j = document.getElementById("fJust"); if (j) justificacion = j.value;
+}
+
+// Equipos a los que se aplica y personas válidas como destinatario en todos ellos
+const destino = () => modo === "uno" ? [equipoId].filter(Boolean) : [...marcados];
+function personas(){
+  const ids = destino().map(eq).filter(Boolean);
+  const comunes = !ids.length ? [] : ids[0].miembros.filter(m => ids.every(t => t.miembros.some(x => x.id === m.id)));
+  const out = new Map([...admins, ...comunes].map(p => [p.id, p.nombre]));
+  niveles.forEach(n => n.destinos.forEach(d => { if (d.tipo === "usuario" && !out.has(d.id)) out.set(d.id, "(no válido para los equipos elegidos)"); }));
+  return [...out].map(([id, nombre]) => ({ id, nombre }));
+}
+
+const toggle = (name, valor, texto, on) =>
+  `<label class="toggle"><input type="checkbox" name="${name}" value="${esc(valor)}" ${on ? "checked" : ""}><span>${esc(texto)}</span></label>`;
+
+function tarjetaNivel(n, i, gente){
+  const acumulado = niveles.slice(0, i + 1).reduce((s, x) => s + (Number(x.espera_min) || 0), 0);
+  const tiene = d => n.destinos.some(x => x.tipo === d.tipo && (x.rol || x.id) === (d.rol || d.id));
+  return `<div class="nivel-esc" data-nivel="${i}" data-gen="${gen}">
+    <div class="cab"><span class="pos">N${i + 1}</span><b>a los ${acumulado} min</b><small>del inicio</small>
+      <span class="acciones-nivel">
+        <button class="boton chico" data-accion="m:subir:${i}" ${i === 0 ? "disabled" : ""} aria-label="Subir">↑</button>
+        <button class="boton chico" data-accion="m:bajar:${i}" ${i === niveles.length - 1 ? "disabled" : ""} aria-label="Bajar">↓</button>
+        <button class="boton chico peligro" data-accion="m:quitar:${i}" ${niveles.length === 1 ? "disabled" : ""} aria-label="Quitar">${icono("x")}</button>
+        <button class="boton chico primario" data-accion="m:cerrar:${i}">Listo</button></span></div>
+    <label class="campo fila-espera"><span>Espera desde el nivel anterior</span>
+      <span class="con-unidad"><input type="number" name="espera" min="1" max="1440" value="${esc(n.espera_min)}"><em>min</em></span></label>
+    <div class="campo"><span>Canales</span><div class="toggles">${datos.canales.map(c => toggle("canal", c, CANAL_TXT[c] || c, n.canales.includes(c))).join("")}</div></div>
+    <div class="campo" style="margin:0"><span>Avisar a</span><div class="toggles">
+      ${datos.roles.map(r => toggle("destino", "rol:" + r, ROL_DEST_TXT[r] || r, tiene({ tipo:"rol", rol:r }))).join("")}
+      ${gente.map(p => toggle("destino", "usuario:" + p.id, p.nombre, tiene({ tipo:"usuario", id:p.id }))).join("")}</div></div>
+    ${franjaNivel(n)}
+    ${alcanceGuardado(n, i)}${sinTelefono(n, i)}
+  </div>`;
+}
+
+// Cuándo puede avisar este nivel (opcional). El horario personal de cada usuario igual manda.
+const DIA_CORTO = ["L", "M", "X", "J", "V", "S", "D"];
+function franjaNivel(n){
+  const f = n.horario?.franjas?.[0];
+  return `<div class="campo" style="margin:12px 0 0"><span>Cuándo avisa este nivel</span>
+    <select name="franja" data-recalc><option value="siempre" ${!n.horario ? "selected" : ""}>Siempre</option>
+      <option value="franjas" ${n.horario ? "selected" : ""}>Solo ciertos días y horas</option></select>
+    ${!n.horario ? "" : `<div class="toggles" style="margin-top:8px">${DIA_CORTO.map((d, k) => toggle("dia", k + 1, d, f.dias.includes(k + 1))).join("")}</div>
+      <span class="con-unidad" style="margin-top:8px"><input type="time" name="desde" value="${esc(f.desde)}"><em>a</em><input type="time" name="hasta" value="${esc(f.hasta)}"></span>`}
+  </div>`;
+}
+// Para la versión guardada: cuántas personas de este nivel recibirían el aviso ahora mismo
+function alcanceGuardado(n, i){
+  const g = modo === "uno" && eq(equipoId)?.matriz?.niveles[i];
+  const mismo = g && JSON.stringify([g.destinos.map(d => d.rol || d.id), g.horario || null]) === JSON.stringify([n.destinos.map(d => d.rol || d.id), n.horario || null]);
+  if (!mismo || !g.alcance_ahora) return "";
+  const a = g.alcance_ahora;
+  const txt = !a.en_franja ? "Ahora este nivel está fuera de su franja: se saltea"
+    : !a.personas ? "Nadie del equipo coincide con estos destinatarios: se saltea"
+    : `Ahora: ${a.disponibles} de ${a.personas} disponible${a.personas === 1 ? "" : "s"} según su horario personal${a.disponibles ? "" : " → se pasa al nivel siguiente"}`;
+  return `<p class="cambio" style="margin:10px 0 0"><span class="ic-txt" style="color:var(${a.en_franja && a.disponibles ? "--ok" : "--warn"})">${icono(a.en_franja && a.disponibles ? "check" : "alerta")}</span> ${esc(txt)}</p>`;
+}
+
+// Llamada marcada pero hay gente sin teléfono (se carga en Perfil → Mi cuenta, o el Admin en Usuarios)
+function sinTelefono(n, i){
+  const g = modo === "uno" && eq(equipoId)?.matriz?.niveles[i], st = g?.alcance_ahora?.sin_telefono;
+  if (!n.canales.includes("llamada") || !st?.length) return "";
+  return `<p class="cambio" style="margin:6px 0 0"><span class="ic-txt" style="color:var(--warn)">${icono("alerta")}</span> Sin teléfono cargado, no reciben la llamada: ${esc(st.join(", "))}</p>`;
+}
+
+// Nivel plegado: resumen de una línea (se toca para editarlo)
+function resumenNivel(n, i, gente){
+  const acumulado = niveles.slice(0, i + 1).reduce((s, x) => s + (Number(x.espera_min) || 0), 0);
+  const quien = n.destinos.map(d => d.tipo === "rol" ? ROL_DEST_TXT[d.rol] || d.rol : gente.find(p => p.id === d.id)?.nombre || "usuario").join(", ") || "sin destinatarios";
+  const f = n.horario?.franjas?.[0];
+  const franja = f ? ` · solo ${f.dias.map(d => DIA_CORTO[d - 1]).join("")} ${f.desde}–${f.hasta}` : "";
+  return `<button type="button" class="nivel-resumen" data-accion="m:abrir:${i}" aria-expanded="false">
+    <span class="nr-tiempo num">${acumulado}′</span>
+    <span class="nr-cuerpo"><b><span class="pos">N${i + 1}</span> ${esc(quien)}</b>
+      <small>espera ${esc(n.espera_min)} min · ${esc(n.canales.map(c => CANAL_TXT[c] || c).join(" · ") || "sin canales")}${esc(franja)}</small>${alcanceGuardado(n, i).replace("<p ", "<span ").replace("</p>", "</span>").replace("margin:10px 0 0", "display:block;margin:4px 0 0")}${sinTelefono(n, i).replace("<p ", "<span ").replace("</p>", "</span>").replace("margin:6px 0 0", "display:block;margin:4px 0 0")}</span>
+    ${icono("flecha")}</button>`;
+}
+
+const avisarAdvertencias = r => (r.advertencias || []).slice(0, 2).forEach(a => App.aviso("Atención: " + a, 7000));
+async function guardar(){
+  leer();
+  const ids = destino();
+  if (!ids.length) return App.aviso("Elegí al menos un equipo");
+  const body = { niveles, justificacion };
+  if (modo === "uno") {
+    body.version = eq(equipoId).matriz?.version ?? null;
+    guardando = true;
+    const r = await App.enviar("PUT", `/equipos/${equipoId}/matriz`, body, "Matriz guardada");
+    guardando = false;
+    if (r) { App.aviso(r.sin_cambios ? "No hubo cambios" : `Matriz de ${eq(equipoId).nombre} guardada · v${r.version}`, 3000); avisarAdvertencias(r); datos = null; equipoId = r.equipo.id; await cargar(); }
+    return;
+  }
+  const nombres = ids.map(id => eq(id).nombre);
+  const ok = await App.formulario({ titulo:`Aplicar a ${ids.length} equipos`, enviar:"Aplicar a todos", peligro:true, campos:[
+    { tipo:"nota", texto:`Se reemplaza la matriz de: ${nombres.join(", ")}. Queda una versión nueva en cada equipo; los escalamientos en curso siguen con la anterior.` }] });
+  if (!ok) return;
+  body.equipos = ids.length === editables().length ? "todos" : ids;
+  body.versiones = Object.fromEntries(ids.map(id => [id, eq(id).matriz?.version ?? null]));
+  guardando = true;
+  const r = await App.enviar("PUT", "/matrices", body, "Matrices guardadas");
+  guardando = false;
+  if (r) { App.aviso(`Actualizados: ${r.actualizados.length}${r.sin_cambios.length ? ` · sin cambios: ${r.sin_cambios.length}` : ""}`, 3500); avisarAdvertencias(r); datos = null; await cargar(); }
+}
+
+App.iniciar({
+  id: "perfil",
+  titulo: "Matrices de escalamiento",
+  render: () => {
+    leer();
+    if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
+    if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando…", "reloj") });
+    const lista = editables();
+    if (!lista.length) return C.tarjeta({ cuerpo: C.vacio("No tenés equipos cuya matriz puedas editar (lo hace el Administrador o el responsable del equipo).", "alerta") });
+    const gente = personas();
+    const t = eq(equipoId);
+    const matrizDe = `<label class="campo" style="margin:0"><span>${modo === "uno" ? "Equipo" : "Partir de la matriz de"}</span><select id="fEquipo" data-cambia="equipo">${lista.map(x =>
+        `<option value="${esc(x.id)}" ${x.id === equipoId ? "selected" : ""}>${esc(x.nombre)} · v${x.matriz?.version ?? "—"}</option>`).join("")}</select></label>
+       ${t?.matriz?.actualizada ? `<p class="cambio" style="margin:8px 0 0">Última versión por ${esc(t.matriz.actualizada.por?.nombre || "—")} · ${hace(t.matriz.actualizada.en)}</p>` : ""}
+       ${t?.matriz?.historial?.length ? `<p class="cambio" style="margin:4px 0 0">Anteriores: ${t.matriz.historial.map(h => `v${h.version} (${esc(h.resumen)})`).join(" · ")}</p>` : ""}`;
+    const aplicarA = lista.length < 2 ? "" : C.tarjeta({ titulo:"Aplicar a", iconoTit:"red", cuerpo:`
+      <div class="subnav" role="radiogroup" aria-label="Aplicar a">
+        <button type="button" role="radio" aria-checked="${modo === "uno"}" class="${modo === "uno" ? "activo" : ""}" data-accion="m:modo:uno">Solo ${esc(t?.nombre || "este equipo")}</button>
+        <button type="button" role="radio" aria-checked="${modo === "varios"}" class="${modo === "varios" ? "activo" : ""}" data-accion="m:modo:varios">Varios o todos</button></div>
+      ${modo === "uno" ? "" : `<div class="btns" style="margin:10px 0 8px"><button class="boton chico" data-accion="m:todos">Marcar todos</button><button class="boton chico" data-accion="m:ninguno">Ninguno</button>
+          <span class="cambio" style="flex:1;align-self:center;text-align:right">${marcados.size} de ${lista.length} equipos</span></div>
+        <div class="opciones">${lista.map(x => `<label class="opcion"><input type="checkbox" name="fMarca" value="${esc(x.id)}" ${marcados.has(x.id) ? "checked" : ""} data-cambia="marca">
+          <span>${esc(x.nombre)}<small style="display:block;padding:0">actual v${x.matriz?.version ?? "—"}: ${esc(x.matriz ? resumen(x.matriz.niveles) : "sin matriz")}</small></span></label>`).join("")}</div>`}` });
+    return `
+      ${C.tarjeta({ titulo:"Matriz", iconoTit:"red", cuerpo:matrizDe })}
+      ${C.tarjeta({ titulo:"Orden de escalamiento", iconoTit:"subir", cuerpo:`
+        <p class="cambio" style="margin:0 0 10px">Si nadie toca <b>Tomar</b> en el INC, se avisa nivel por nivel en este orden. Tocá un nivel para editarlo.
+          El horario de avisos de cada persona manda: fuera de él le llega en silencio, y si nadie del nivel está disponible se pasa al siguiente.</p>
+        <div class="linea-niveles">${niveles.map((n, i) => i === abierto ? tarjetaNivel(n, i, gente) : resumenNivel(n, i, gente)).join("")}</div>
+        ${niveles.length < 10 ? `<button class="boton" data-accion="m:agregar">${icono("mas")} Agregar nivel</button>` : ""}` })}
+      ${aplicarA}
+      ${C.tarjeta({ titulo:"Guardar", iconoTit:"check", cuerpo:`
+        <label class="campo"><span>Justificación${modo === "varios" ? " (obligatoria)" : ""}</span><textarea id="fJust" maxlength="300" placeholder="Ej.: Se acorta la espera de Gestores por SLA de clientes corporativos">${esc(justificacion)}</textarea></label>
+        <button class="boton primario" data-accion="m:guardar" ${guardando ? "disabled" : ""}>${icono("check")} ${modo === "uno" ? `Guardar nueva versión de ${esc(t?.nombre || "")}` : `Aplicar a ${marcados.size} equipo${marcados.size === 1 ? "" : "s"}`}</button>` })}`;
+  },
+  alMontar: () => {
+    if (!datos && !error) cargar();
+    document.querySelectorAll("[data-cambia]").forEach(el => el.onchange = () => {
+      leer();
+      if (el.dataset.cambia === "equipo") { equipoId = el.value; cargarDe(equipoId); abierto = null; }
+      if (el.dataset.cambia === "marca") el.checked ? marcados.add(el.value) : marcados.delete(el.value);
+      if (el.dataset.cambia === "plantilla" && el.value) cargarDe(el.value);
+      App.redibujar();
+    });
+    document.querySelectorAll("[data-recalc]").forEach(el => el.onchange = () => { leer(); App.redibujar(); });
+  },
+  accion: id => {
+    const [p, a, x] = id.split(":");
+    if (p !== "m") return;
+    leer();
+    const i = Number(x);
+    if (a === "modo") { modo = x; if (modo === "varios" && !marcados.size) editables().forEach(t => marcados.add(t.id)); }   // cambiar a quién se aplica no borra lo editado
+    else if (a === "abrir") abierto = i;
+    else if (a === "cerrar") abierto = null;
+    else if (a === "todos") editables().forEach(t => marcados.add(t.id));
+    else if (a === "ninguno") marcados.clear();
+    else if (a === "subir" && i > 0) { [niveles[i - 1], niveles[i]] = [niveles[i], niveles[i - 1]]; abierto = i - 1; }
+    else if (a === "bajar" && i < niveles.length - 1) { [niveles[i + 1], niveles[i]] = [niveles[i], niveles[i + 1]]; abierto = i + 1; }
+    else if (a === "quitar" && niveles.length > 1) { niveles.splice(i, 1); abierto = null; }
+    else if (a === "agregar") { const u = niveles[niveles.length - 1]; niveles.push({ espera_min:15, canales:[...(u?.canales || ["app"])], destinos:[{ tipo:"rol", rol:"GESTOR" }] }); abierto = niveles.length - 1; }
+    else if (a === "guardar") { guardar(); return true; }
+    if (["subir", "bajar", "quitar", "agregar", "abrir", "cerrar"].includes(a)) gen++;
+    App.redibujar();
+    return true;
+  }
+});
+</script>
+</body>
+</html>
