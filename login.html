@@ -4,27 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f17">
-<title>Ingresar · NOC</title>
+<title>Ingresar · Assurance Center</title>
+<script src="ux.js?v=1"></script>
 <link rel="stylesheet" href="estilos.css">
 <style>
   .login{min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px 16px}
   .login .card{width:100%; max-width:380px; margin:0}
   .login .marca{display:flex; align-items:center; gap:10px; margin:0 0 18px}
-  .login .marca .ic{width:40px; height:40px; border-radius:12px; display:grid; place-items:center; background:var(--acento); color:#fff}
+  .login .marca .ic{width:44px; height:44px; border-radius:12px; display:grid; place-items:center; background:var(--boton); color:var(--sobre-boton)}
   .login .marca .ic svg{width:22px; height:22px}
-  .login .marca b{font-size:20px; display:block}
-  .login .marca small{color:var(--suave); font-size:12px}
+  .login .marca .marca-nombre{font-size:var(--t-xl); font-weight:700; letter-spacing:-.015em; line-height:1.2; margin:0}
+  .login .marca small{color:var(--suave); font-size:var(--t-sm)}
   .login .marca .ic svg{fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
-  .login .campo > label span{font-size:12px; color:var(--suave); font-weight:500}
+  .login .campo > label span{font-size:var(--t-sm); color:var(--suave); font-weight:500}
   .login .fila-clave{display:flex; gap:8px}
   .login .fila-clave input{flex:1; min-width:0}
-  .login .ver{width:auto; flex:none; min-height:44px; padding:0 12px; font-size:12px}
+  .login .ver{width:auto; flex:none; min-height:var(--objetivo); min-width:var(--objetivo); padding:0 12px; font-size:var(--t-sm)}
   .login .nota a{color:var(--acento); text-decoration:underline}
   .login .error{min-height:20px; margin:0 0 10px; color:var(--crit); font-size:14px}
   .login .boton.primario{width:100%; min-height:44px; justify-content:center}
-  .login .nota{color:var(--suave); font-size:12px; margin:14px 0 0; line-height:1.5}
+  .login .nota{color:var(--suave); font-size:var(--t-sm); margin:14px 0 0; line-height:1.5}
   .login .reglas{margin:0 0 12px; padding-left:0; list-style:none; color:var(--suave); font-size:12px; line-height:1.6}
-  .login .reglas li.ok{color:var(--ok, #3fb950)}
+  .login .reglas li.ok{color:var(--ok)}
 </style>
 </head>
 <body>
@@ -62,7 +63,7 @@ function guardarSesion(d){
   if (local) { ss.setItem("tokenRBAC", d.token); ss.setItem("loginDemo", d.token); }   // la demo usa la sesión recién creada
 }
 
-const marca = sub => `<div class="marca"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONOS.candado}</svg></span><span><b>NOC</b><small>${esc(sub)}</small></span></div>`;
+const marca = sub => `<div class="marca"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONOS.candado}</svg></span><span><h1 class="marca-nombre">Assurance Center</h1><small>${esc(sub)}</small></span></div>`;
 const campoClave = (id, etiqueta, auto) => `<div class="campo"><label for="${id}"><span>${etiqueta}</span></label>
   <div class="fila-clave"><input id="${id}" type="password" autocomplete="${auto}" required>
   <button type="button" class="boton ver" data-ver="${id}" aria-controls="${id}">Mostrar</button></div></div>`;
@@ -70,7 +71,7 @@ const campoClave = (id, etiqueta, auto) => `<div class="campo"><label for="${id}
 function dibujar(error = ""){
   const caja = document.getElementById("caja");
   if (estado === "ingreso") {
-    caja.innerHTML = `${marca("Centro de operaciones de red")}
+    caja.innerHTML = `${marca("Gestión de incidentes y continuidad del servicio")}
       <form id="fIngreso" novalidate>
         <label class="campo"><span>Usuario o correo</span><input id="fUsuario" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(ss.getItem("usuario") || "")}"></label>
         ${campoClave("fClave", "Clave", "current-password")}
