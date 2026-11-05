@@ -15,7 +15,7 @@
 <body>
 <main id="app"></main>
 <!-- Demo Local: backend simulado del módulo de usuarios y equipos -->
-<script src="rbac-demo.js?v=31"></script>
+<script src="rbac-demo.js?v=32"></script>
 <script src="app.js"></script>
 <script>
 /* PERFIL — cuenta, rol, equipos, administración y configuración */
@@ -108,6 +108,65 @@ async function editarTelefono(){
   if (await App.enviar("PUT", "/me/telefono", { telefono:f.telefono }, f.telefono ? "Teléfono guardado" : "Teléfono quitado: no te van a llamar")) cargarYo();
 }
 
+/* ===== Mi secuencia de avisos: los pasos de la matriz (fijos) + los que sumo yo =====
+   Los minutos se cuentan desde que arranca cada nivel. Mis pasos se suman a los de la matriz y nunca los sacan;
+   si un canal está en los dos, vale el minuto más temprano. Lo que mi perfil no recibe, o la llamada sin teléfono, no se manda. */
+const CANAL_TXT = { app:"App", email:"Correo", telegram:"Telegram", llamada:"Llamada" };
+const MAX_PASOS = 5;
+const txtPaso = p => `${CANAL_TXT[p.canal] || p.canal} ${p.min ? "a los " + p.min + " min" : "enseguida"}`;
+const canalesPerfil = () => yo?.notificaciones_perfil?.find(t => t.id === "escalamiento")?.canales || [];
+function chipPaso(p){
+  const fijo = p.origen === "matriz";
+  const estilo = p.permitido ? "" : ' style="opacity:.55;text-decoration:line-through"';
+  return `<span class="chip ${p.permitido ? (fijo ? "info" : "ok") : "warn"}"${estilo} title="${esc(p.permitido ? (fijo ? "De la matriz: no se puede sacar" : "Paso tuyo") : p.motivo || "")}">
+    ${fijo ? icono("candado") : '<span class="punto"></span>'}${esc(txtPaso(p))}</span>`;
+}
+function tarjetaSecuencia(){
+  if (!yo) return C.tarjeta({ titulo:"Mi secuencia de avisos", iconoTit:"subir", cuerpo:C.vacio("Cargando…", "reloj") });
+  const propios = yo.usuario.pasos || [], secs = yo.secuencias || [];
+  const llamada = propios.some(p => p.canal === "llamada") || secs.some(s => s.niveles.some(n => n.pasos.some(p => p.canal === "llamada")));
+  const faltaTel = llamada && !yo.usuario.telefono && canalesPerfil().includes("llamada");
+  const matrices = secs.length ? `<ul class="lista">${secs.flatMap(s => s.niveles.map(n => `<li class="info"><span class="ic">${icono("red")}</span>
+      <span class="cuerpo"><b>${esc(s.equipo.nombre)} · nivel ${esc(n.nivel)}</b><small>El nivel siguiente arranca a los ${esc(n.espera_min)} min</small>
+      <span class="toggles" style="margin-top:6px">${n.pasos.map(chipPaso).join("")}</span></span></li>`)).join("")}</ul>`
+    : `<p class="cambio" style="margin:0 0 10px">Hoy no figurás en ninguna matriz de escalamiento: tus pasos se van a sumar cuando te agreguen.</p>`;
+  const mios = `<ul class="lista">${propios.map((p, i) => `<li class="ok"><span class="ic">${icono("campana")}</span>
+      <span class="cuerpo"><b>${esc(txtPaso(p))}</b><small>${canalesPerfil().includes(p.canal) ? "Se suma en cada nivel donde figurás" : "Tu perfil no recibe este canal: no se manda"}</small></span>
+      <button class="boton chico peligro" data-accion="paso-quitar:${i}" aria-label="Quitar ${esc(txtPaso(p))}">${icono("x")}</button></li>`).join("")}
+    ${propios.length < MAX_PASOS ? `<li class="info clic" data-accion="paso-agregar"><span class="ic">${icono("mas")}</span><span class="cuerpo"><b>Agregar un paso mío</b>
+      <small>Por ejemplo, un correo a los 5 minutos</small></span><span class="lado">${icono("flecha")}</span></li>` : ""}</ul>`;
+  return C.tarjeta({ titulo:"Mi secuencia de avisos", iconoTit:"subir", cuerpo:`
+    <p class="cambio" style="margin:0 0 10px">Si nadie toca <b>Tomar</b>, el escalamiento te avisa en este orden. Los minutos se cuentan desde que arranca cada nivel.
+      ${icono("candado")} = lo pone la matriz del equipo y no se puede sacar. Tus pasos se suman y respetan tu horario de avisos.</p>
+    ${faltaTel ? `<p class="cambio" style="margin:0 0 10px;color:var(--warn)">${icono("alerta")} Tenés Llamada en tu secuencia pero no cargaste tu teléfono:
+      <a href="#" data-accion="telefono">cargalo acá</a> o no te van a llamar.</p>` : ""}
+    <div class="sub grupo-cfg">En las matrices de tus equipos</div>${matrices}
+    <div class="sub grupo-cfg">Mis pasos (los agrego yo)</div>${mios}` });
+}
+async function guardarPasos(pasos, ok){
+  const r = await App.enviar("PUT", "/me/pasos", { pasos }, ok);
+  if (r) { (r.advertencias || []).slice(0, 2).forEach(a => App.aviso("Atención: " + a, 7000)); cargarYo(); }
+}
+async function agregarPaso(){
+  const propios = yo?.usuario?.pasos || [];
+  const libres = ["app", "email", "telegram", "llamada"].filter(c => !propios.some(p => p.canal === c));
+  if (!libres.length) return App.aviso("Ya tenés un paso por cada canal");
+  const f = await App.formulario({ titulo:"Agregar un paso a mi secuencia", enviar:"Agregar", campos:[
+    { tipo:"nota", texto:"Se suma a lo que dice la matriz de cada equipo donde figurás (no lo reemplaza). Los minutos se cuentan desde que arranca el nivel; 0 = enseguida." },
+    { id:"canal", etiqueta:"Canal", tipo:"select", valor:libres[0], opciones:libres.map(c => ({ valor:c, texto:(CANAL_TXT[c] || c) + (canalesPerfil().includes(c) ? "" : " (tu perfil no lo recibe)") })) },
+    { id:"min", etiqueta:"A los (minutos, de 0 a 1440)", tipo:"number", valor:"5", requerido:true } ] });
+  if (!f) return;
+  const min = Number(f.min);
+  if (!Number.isInteger(min) || min < 0 || min > 1440) return App.aviso("Los minutos van de 0 a 1440", 3500);
+  await guardarPasos([...propios, { canal:f.canal, min }], "Paso agregado a tu secuencia");
+}
+async function quitarPaso(i){
+  const propios = yo?.usuario?.pasos || [], p = propios[i];
+  if (!p) return;
+  if (!await confirmarDoble(`el paso «${txtPaso(p)}»`, "Ese aviso deja de llegarte en los escalamientos. Los pasos que pone la matriz del equipo siguen igual.")) return;
+  await guardarPasos(propios.filter((_, k) => k !== i), "Paso quitado de tu secuencia");
+}
+
 async function cambiarClave(){
   const f = await App.formulario({ titulo:"Cambiar mi clave", enviar:"Cambiar clave", campos:[
     { tipo:"nota", texto:"Mínimo 12 caracteres, con mayúscula, minúscula y número, y sin tu usuario. Se cierran tus otras sesiones abiertas." },
@@ -170,6 +229,7 @@ App.iniciar({
           ${App.rol === "ADMIN" ? "" : `<li class="info"><a class="enlace" href="notificaciones-perfil.html"><span class="ic">${icono("info")}</span><span class="cuerpo"><b>Qué te llega por tu perfil</b>
           <small>${esc(yo ? yo.notificaciones_perfil.filter(t => t.canales.length).length + " de " + yo.notificaciones_perfil.length + " tipos de aviso" : "…")}</small></span><span class="lado">${icono("flecha")}</span></a></li>`}</ul>`;
       })() })}
+      ${tarjetaSecuencia()}
       ${grupos.length ? C.tarjeta({ titulo:"Configuración", iconoTit:"filtro", cuerpo: grupos.map(([t, xs]) =>
         `<div class="sub grupo-cfg">${esc(t)}</div><ul class="lista">${xs.join("")}</ul>`).join("") }) : ""}
       ${demo() ? `<details class="demo" id="modoDemo" ${demoAbierto ? "open" : ""}><summary>Modo demo · usuario demo, n8n, velocidad y datos</summary>
@@ -202,6 +262,8 @@ App.iniciar({
   accion: id => {
     if (id === "horario") { editarHorario(); return true; }
     if (id === "telefono") { editarTelefono(); return true; }
+    if (id === "paso-agregar") { agregarPaso(); return true; }
+    if (id.startsWith("paso-quitar:")) { quitarPaso(Number(id.slice(12))); return true; }
     if (id === "alarma-sw") {
       (async () => {
         if (App.alarmaOn() && !await confirmarDoble("la alarma de escalamientos", "Si llega un escalamiento o vence un SLA, no va a sonar ni vibrar con la página abierta. Solo vas a ver el aviso en la campana.")) return;

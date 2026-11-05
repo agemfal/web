@@ -14,11 +14,13 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=31"></script>
+<script src="rbac-demo.js?v=32"></script>
 <script src="app.js"></script>
 <script>
-/* MATRICES DE ESCALAMIENTO — se edita el orden (niveles, esperas, canales y destinatarios)
-   de un equipo, o se aplica la misma matriz a varios equipos o a todos juntos.
+/* MATRICES DE ESCALAMIENTO — se edita el orden (niveles, esperas y destinatarios) de un equipo,
+   o se aplica la misma matriz a varios equipos o a todos juntos.
+   Cada destinatario de un nivel tiene su SECUENCIA: canal + "a los N min" desde que arranca el nivel
+   (ej. Operadores: App 0′ → Correo 10′ → Llamada 20′). Los canales del nivel son la unión de las secuencias.
    Cada guardado crea una versión nueva; el backend valida todo y decide qué equipos puede tocar cada uno. */
 let datos = null, error = null, admins = [], modo = "uno", equipoId = "", marcados = new Set(), niveles = [], justificacion = "", guardando = false, gen = 0, abierto = null;   // abierto = nivel desplegado en la línea de tiempo
 const CANAL_TXT = { app:"App", email:"Correo", telegram:"Telegram", llamada:"Llamada" };
@@ -27,6 +29,12 @@ const copia = x => JSON.parse(JSON.stringify(x));
 const editables = () => (datos?.equipos || []).filter(t => t.puede_editar && t.estado === "activo");
 const eq = id => datos.equipos.find(t => t.id === id);
 const resumen = ns => ns.map(n => `N${n.nivel || ""} ${n.espera_min}′`).join(" → ");
+const MAX_PASOS = 5;
+// Secuencia de un destinatario (una matriz vieja sin pasos: sus canales a los 0′)
+const pasosDe = (n, d) => (d.pasos && d.pasos.length ? d.pasos : (n.canales || []).map(c => ({ canal:c, min:0 }))).map(p => ({ canal:p.canal, min:Number(p.min) || 0 }));
+const canalesDe = n => [...new Set(n.destinos.flatMap(d => (d.pasos || []).map(p => p.canal)))];
+const claveDest = d => (d.tipo === "rol" ? "rol~" + d.rol : "usuario~" + d.id);
+const textoSecuencia = pasos => pasos.map(p => `${CANAL_TXT[p.canal] || p.canal} ${p.min}′`).join(" → ");
 
 async function cargar(){
   const e = await App.api("GET", "/equipos");
@@ -47,9 +55,10 @@ async function cargar(){
 function cargarDe(id){
   gen++;
   const t = id && eq(id);
-  niveles = t?.matriz ? copia(t.matriz.niveles).map(({ espera_min, canales, destinos, horario }) => ({ espera_min, canales, horario:horario || null,
-    destinos:destinos.map(d => d.tipo === "rol" ? { tipo:"rol", rol:d.rol } : { tipo:"usuario", id:d.id }) }))
-    : [{ espera_min:5, canales:["app"], destinos:[{ tipo:"rol", rol:"OPERADOR" }] }];
+  niveles = t?.matriz ? copia(t.matriz.niveles).map(n => ({ espera_min:n.espera_min, horario:n.horario || null,
+    destinos:n.destinos.map(d => ({ ...(d.tipo === "rol" ? { tipo:"rol", rol:d.rol } : { tipo:"usuario", id:d.id }), pasos:pasosDe(n, d) })) }))
+    : [{ espera_min:5, destinos:[{ tipo:"rol", rol:"OPERADOR", pasos:[{ canal:"app", min:0 }] }] }];
+  niveles.forEach(n => { n.canales = canalesDe(n); });
 }
 
 // Lo escrito en pantalla pasa al estado antes de cada redibujo
@@ -58,9 +67,15 @@ function leer(){
     if (Number(el.dataset.gen) !== gen) return;   // pantalla vieja (se reordenó o cambió de equipo)
     const n = niveles[Number(el.dataset.nivel)]; if (!n) return;
     n.espera_min = Number(el.querySelector("[name=espera]").value);
-    n.canales = [...el.querySelectorAll("[name=canal]:checked")].map(x => x.value);
+    const antes = n.destinos;
     n.destinos = [...el.querySelectorAll("[name=destino]:checked")].map(x => {
-      const [tipo, v] = x.value.split(":"); return tipo === "rol" ? { tipo, rol:v } : { tipo, id:v }; });
+      const [tipo, v] = x.value.split(":"), d = tipo === "rol" ? { tipo, rol:v } : { tipo, id:v };
+      // Su secuencia: la de pantalla; si recién se marcó, la que tenía o "App enseguida"
+      const filas = [...el.querySelectorAll(`[data-seq="${claveDest(d)}"] [data-paso]`)];
+      d.pasos = filas.length ? filas.map(f => ({ canal:f.querySelector("[name=pcanal]").value, min:Math.max(0, Math.trunc(Number(f.querySelector("[name=pmin]").value) || 0)) }))
+        : (antes.find(y => claveDest(y) === claveDest(d))?.pasos || [{ canal:"app", min:0 }]);
+      return d; });
+    n.canales = canalesDe(n);
     const modoF = el.querySelector("[name=franja]")?.value;
     if (modoF === "siempre") n.horario = null;
     else if (modoF === "franjas") {
@@ -82,8 +97,23 @@ function personas(){
   return [...out].map(([id, nombre]) => ({ id, nombre }));
 }
 
-const toggle = (name, valor, texto, on) =>
-  `<label class="toggle"><input type="checkbox" name="${name}" value="${esc(valor)}" ${on ? "checked" : ""}><span>${esc(texto)}</span></label>`;
+const toggle = (name, valor, texto, on, extra = "") =>
+  `<label class="toggle"><input type="checkbox" name="${name}" value="${esc(valor)}" ${on ? "checked" : ""} ${extra}><span>${esc(texto)}</span></label>`;
+const nombreDest = (d, gente) => d.tipo === "rol" ? ROL_DEST_TXT[d.rol] || d.rol : gente.find(p => p.id === d.id)?.nombre || "usuario";
+
+// Editor de la secuencia de un destinatario: filas canal + "a los N min", con agregar y quitar
+function editorSecuencia(n, i, d, gente){
+  const k = claveDest(d), pasos = d.pasos || [], libres = datos.canales.filter(c => !pasos.some(p => p.canal === c));
+  return `<div class="campo" data-seq="${esc(k)}" style="margin:10px 0 0;border-top:1px dashed var(--linea);padding-top:10px">
+    <span>Secuencia · ${esc(nombreDest(d, gente))}</span>
+    ${pasos.map((p, j) => `<div class="fila-cfg" data-paso="${j}" style="grid-template-columns:minmax(0,1fr) auto auto">
+      <select name="pcanal" aria-label="Canal del paso ${j + 1}">${datos.canales.map(c => `<option value="${esc(c)}" ${c === p.canal ? "selected" : ""}
+        ${c !== p.canal && pasos.some(q => q.canal === c) ? "disabled" : ""}>${esc(CANAL_TXT[c] || c)}</option>`).join("")}</select>
+      <span class="con-unidad"><em>a los</em><input type="number" name="pmin" min="0" max="1440" value="${esc(p.min)}" aria-label="Minutos del paso ${j + 1}"><em>min</em></span>
+      <button class="boton chico peligro" data-accion="m:pmenos:${i}:${esc(k)}:${j}" ${pasos.length === 1 ? "disabled" : ""} aria-label="Quitar paso">${icono("x")}</button></div>`).join("")}
+    ${pasos.length < MAX_PASOS && libres.length ? `<button class="boton chico" data-accion="m:pmas:${i}:${esc(k)}">${icono("mas")} Agregar paso</button>` : ""}
+  </div>`;
+}
 
 function tarjetaNivel(n, i, gente){
   const acumulado = niveles.slice(0, i + 1).reduce((s, x) => s + (Number(x.espera_min) || 0), 0);
@@ -97,10 +127,12 @@ function tarjetaNivel(n, i, gente){
         <button class="boton chico primario" data-accion="m:cerrar:${i}">Listo</button></span></div>
     <label class="campo fila-espera"><span>Espera desde el nivel anterior</span>
       <span class="con-unidad"><input type="number" name="espera" min="1" max="1440" value="${esc(n.espera_min)}"><em>min</em></span></label>
-    <div class="campo"><span>Canales</span><div class="toggles">${datos.canales.map(c => toggle("canal", c, CANAL_TXT[c] || c, n.canales.includes(c))).join("")}</div></div>
     <div class="campo" style="margin:0"><span>Avisar a</span><div class="toggles">
-      ${datos.roles.map(r => toggle("destino", "rol:" + r, ROL_DEST_TXT[r] || r, tiene({ tipo:"rol", rol:r }))).join("")}
-      ${gente.map(p => toggle("destino", "usuario:" + p.id, p.nombre, tiene({ tipo:"usuario", id:p.id }))).join("")}</div></div>
+      ${datos.roles.map(r => toggle("destino", "rol:" + r, ROL_DEST_TXT[r] || r, tiene({ tipo:"rol", rol:r }), "data-recalc")).join("")}
+      ${gente.map(p => toggle("destino", "usuario:" + p.id, p.nombre, tiene({ tipo:"usuario", id:p.id }), "data-recalc")).join("")}</div></div>
+    ${n.destinos.length ? `<p class="cambio" style="margin:10px 0 0">Cada destinatario recibe su secuencia: los minutos se cuentan desde que arranca este nivel.
+      Si alguien toca <b>Tomar</b>, se corta lo que falta. Cada persona puede sumar pasos propios en su Perfil, pero no sacar estos.</p>` : ""}
+    ${n.destinos.map(d => editorSecuencia(n, i, d, gente)).join("")}
     ${franjaNivel(n)}
     ${alcanceGuardado(n, i)}${sinTelefono(n, i)}
   </div>`;
@@ -132,20 +164,22 @@ function alcanceGuardado(n, i){
 // Llamada marcada pero hay gente sin teléfono (se carga en Perfil → Mi cuenta, o el Admin en Usuarios)
 function sinTelefono(n, i){
   const g = modo === "uno" && eq(equipoId)?.matriz?.niveles[i], st = g?.alcance_ahora?.sin_telefono;
-  if (!n.canales.includes("llamada") || !st?.length) return "";
+  if (!canalesDe(n).includes("llamada") || !st?.length) return "";
   return `<p class="cambio" style="margin:6px 0 0"><span class="ic-txt" style="color:var(--warn)">${icono("alerta")}</span> Sin teléfono cargado, no reciben la llamada: ${esc(st.join(", "))}</p>`;
 }
 
 // Nivel plegado: resumen de una línea (se toca para editarlo)
 function resumenNivel(n, i, gente){
   const acumulado = niveles.slice(0, i + 1).reduce((s, x) => s + (Number(x.espera_min) || 0), 0);
-  const quien = n.destinos.map(d => d.tipo === "rol" ? ROL_DEST_TXT[d.rol] || d.rol : gente.find(p => p.id === d.id)?.nombre || "usuario").join(", ") || "sin destinatarios";
+  const quien = n.destinos.map(d => nombreDest(d, gente)).join(", ") || "sin destinatarios";
+  const secuencias = n.destinos.map(d => `${nombreDest(d, gente)}: ${textoSecuencia(d.pasos || [])}`);
   const f = n.horario?.franjas?.[0];
   const franja = f ? ` · solo ${f.dias.map(d => DIA_CORTO[d - 1]).join("")} ${f.desde}–${f.hasta}` : "";
   return `<button type="button" class="nivel-resumen" data-accion="m:abrir:${i}" aria-expanded="false">
     <span class="nr-tiempo num">${acumulado}′</span>
     <span class="nr-cuerpo"><b><span class="pos">N${i + 1}</span> ${esc(quien)}</b>
-      <small>espera ${esc(n.espera_min)} min · ${esc(n.canales.map(c => CANAL_TXT[c] || c).join(" · ") || "sin canales")}${esc(franja)}</small>${alcanceGuardado(n, i).replace("<p ", "<span ").replace("</p>", "</span>").replace("margin:10px 0 0", "display:block;margin:4px 0 0")}${sinTelefono(n, i).replace("<p ", "<span ").replace("</p>", "</span>").replace("margin:6px 0 0", "display:block;margin:4px 0 0")}</span>
+      ${secuencias.map(t => `<small style="display:block">${esc(t)}</small>`).join("")}
+      <small>espera ${esc(n.espera_min)} min${esc(franja)}</small>${alcanceGuardado(n, i).replace("<p ", "<span ").replace("</p>", "</span>").replace("margin:10px 0 0", "display:block;margin:4px 0 0")}${sinTelefono(n, i).replace("<p ", "<span ").replace("</p>", "</span>").replace("margin:6px 0 0", "display:block;margin:4px 0 0")}</span>
     ${icono("flecha")}</button>`;
 }
 
@@ -154,6 +188,8 @@ async function guardar(){
   leer();
   const ids = destino();
   if (!ids.length) return App.aviso("Elegí al menos un equipo");
+  const vacio = niveles.findIndex(n => !n.destinos.length);
+  if (vacio >= 0) return App.aviso(`Nivel ${vacio + 1}: marcá al menos un destinatario`, 3500);
   const body = { niveles, justificacion };
   if (modo === "uno") {
     body.version = eq(equipoId).matriz?.version ?? null;
@@ -202,7 +238,8 @@ App.iniciar({
       ${C.tarjeta({ titulo:"Matriz", iconoTit:"red", cuerpo:matrizDe })}
       ${C.tarjeta({ titulo:"Orden de escalamiento", iconoTit:"subir", cuerpo:`
         <p class="cambio" style="margin:0 0 10px">Si nadie toca <b>Tomar</b> en el INC, se avisa nivel por nivel en este orden. Tocá un nivel para editarlo.
-          El horario de avisos de cada persona manda: fuera de él le llega en silencio, y si nadie del nivel está disponible se pasa al siguiente.</p>
+          El horario de avisos de cada persona manda: fuera de él le llega en silencio, y si nadie del nivel está disponible se pasa al siguiente.
+          Dentro de cada nivel, cada destinatario tiene su secuencia (por ejemplo App enseguida → Correo a los 10 min → Llamada a los 20 min).</p>
         <div class="linea-niveles">${niveles.map((n, i) => i === abierto ? tarjetaNivel(n, i, gente) : resumenNivel(n, i, gente)).join("")}</div>
         ${niveles.length < 10 ? `<button class="boton" data-accion="m:agregar">${icono("mas")} Agregar nivel</button>` : ""}` })}
       ${aplicarA}
@@ -222,7 +259,7 @@ App.iniciar({
     document.querySelectorAll("[data-recalc]").forEach(el => el.onchange = () => { leer(); App.redibujar(); });
   },
   accion: id => {
-    const [p, a, x] = id.split(":");
+    const [p, a, x, clave, j] = id.split(":");
     if (p !== "m") return;
     leer();
     const i = Number(x);
@@ -234,9 +271,18 @@ App.iniciar({
     else if (a === "subir" && i > 0) { [niveles[i - 1], niveles[i]] = [niveles[i], niveles[i - 1]]; abierto = i - 1; }
     else if (a === "bajar" && i < niveles.length - 1) { [niveles[i + 1], niveles[i]] = [niveles[i], niveles[i + 1]]; abierto = i + 1; }
     else if (a === "quitar" && niveles.length > 1) { niveles.splice(i, 1); abierto = null; }
-    else if (a === "agregar") { const u = niveles[niveles.length - 1]; niveles.push({ espera_min:15, canales:[...(u?.canales || ["app"])], destinos:[{ tipo:"rol", rol:"GESTOR" }] }); abierto = niveles.length - 1; }
+    else if (a === "agregar") { niveles.push({ espera_min:15, canales:["app"], destinos:[{ tipo:"rol", rol:"GESTOR", pasos:[{ canal:"app", min:0 }] }] }); abierto = niveles.length - 1; }
+    else if (a === "pmas" || a === "pmenos") {      // agregar o quitar un paso de la secuencia de un destinatario
+      const d = niveles[i]?.destinos.find(y => claveDest(y) === clave);
+      if (d && a === "pmas" && d.pasos.length < MAX_PASOS) {
+        const canal = datos.canales.find(c => !d.pasos.some(q => q.canal === c));
+        if (canal) d.pasos.push({ canal, min:Math.min(1440, Math.max(0, ...d.pasos.map(q => q.min)) + 10) });
+      }
+      if (d && a === "pmenos" && d.pasos.length > 1) d.pasos.splice(Number(j), 1);
+      if (niveles[i]) niveles[i].canales = canalesDe(niveles[i]);
+    }
     else if (a === "guardar") { guardar(); return true; }
-    if (["subir", "bajar", "quitar", "agregar", "abrir", "cerrar"].includes(a)) gen++;
+    if (["subir", "bajar", "quitar", "agregar", "abrir", "cerrar", "pmas", "pmenos"].includes(a)) gen++;
     App.redibujar();
     return true;
   }

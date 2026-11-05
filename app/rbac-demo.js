@@ -38,16 +38,39 @@ const ReglasRBAC = (() => {
       for (const [k, n] of niveles.entries()) {
         const espera = Math.trunc(Number(n.espera_min));
         if (!(espera >= 1 && espera <= 1440)) return no(400, "ESPERA_INVALIDA", `Nivel ${k + 1}: la espera debe ser de 1 a 1440 minutos`);
-        const canales = [...new Set(n.canales || [])];
-        if (!canales.length || canales.some(c => !CANALES.includes(c))) return no(400, "CANAL_INVALIDO", `Nivel ${k + 1}: canales inválidos`);
-        const destinos = (n.destinos || []).map(d => d.tipo === "rol" ? { tipo:"rol", rol:d.rol } : { tipo:"usuario", id:d.id });
-        if (!destinos.length) return no(400, "SIN_DESTINOS", `Nivel ${k + 1}: indicá al menos un destinatario`);
-        for (const d of destinos) {
-          if (d.tipo === "rol" && !ROLES.includes(d.rol)) return no(400, "DESTINO_INVALIDO", `Nivel ${k + 1}: rol inválido`);
-          if (d.tipo === "usuario" && !(eq.miembros || []).some(m => m.id === d.id) && !(raw.admins || []).includes(d.id))
+        // Canales del nivel: valen para los destinatarios que no traen su propia secuencia ("pasos")
+        const base = [...new Set(n.canales || [])], crudos = n.destinos || [];
+        if (base.some(c => !CANALES.includes(c)) || (!base.length && !crudos.some(d => Array.isArray(d.pasos))))
+          return no(400, "CANAL_INVALIDO", `Nivel ${k + 1}: canales inválidos`);
+        if (!crudos.length) return no(400, "SIN_DESTINOS", `Nivel ${k + 1}: indicá al menos un destinatario`);
+        const destinos = [];
+        for (const d of crudos) {
+          const x = d.tipo === "rol" ? { tipo:"rol", rol:d.rol } : { tipo:"usuario", id:d.id };
+          if (x.tipo === "rol" && !ROLES.includes(x.rol)) return no(400, "DESTINO_INVALIDO", `Nivel ${k + 1}: rol inválido`);
+          if (x.tipo === "usuario" && !(eq.miembros || []).some(m => m.id === x.id) && !(raw.admins || []).includes(x.id))
             return no(400, "DESTINO_INVALIDO", `Nivel ${k + 1}: el usuario no pertenece al equipo`);
+          // Secuencia de este destinatario: [{ canal, min }] con min desde que arranca el nivel (0 = enseguida)
+          let pasos = base.map(c => ({ canal:c, min:0 }));
+          if (Array.isArray(d.pasos)) {
+            if (!d.pasos.length || d.pasos.length > 5) return no(400, "PASOS_INVALIDOS", `Nivel ${k + 1}: cada destinatario lleva de 1 a 5 pasos`);
+            pasos = [];
+            for (const p of d.pasos) {
+              const min = Number(p && p.min);
+              if (!CANALES.includes(p && p.canal) || !Number.isInteger(min) || min < 0 || min > 1440)
+                return no(400, "PASOS_INVALIDOS", `Nivel ${k + 1}: cada paso necesita un canal válido y de 0 a 1440 minutos`);
+              if (pasos.some(q => q.canal === p.canal)) return no(400, "PASOS_INVALIDOS", `Nivel ${k + 1}: un canal aparece dos veces en la misma secuencia`);
+              pasos.push({ canal:p.canal, min });
+            }
+            pasos.sort((a, b) => a.min - b.min);
+          }
+          if (!pasos.length) return no(400, "CANAL_INVALIDO", `Nivel ${k + 1}: canales inválidos`);
+          destinos.push({ x, pasos });
         }
-        out.push({ nivel:k + 1, espera_min:espera, canales, destinos });
+        // Los canales del nivel pasan a ser la unión de los pasos; la secuencia se guarda solo si no es "todo enseguida"
+        const canales = [...new Set(destinos.flatMap(d => d.pasos.map(p => p.canal)))];
+        const todoYa = JSON.stringify(canales.map(c => ({ canal:c, min:0 })));
+        out.push({ nivel:k + 1, espera_min:espera, canales,
+          destinos:destinos.map(({ x, pasos }) => JSON.stringify(pasos) === todoYa ? x : { ...x, pasos }) });
       }
       return { ok:true, team_id:eq.id, niveles:out };
     }
@@ -88,7 +111,8 @@ const ReglasRBAC = (() => {
     "servicios_ins","servicios_del","productos_ins","productos_del","matrices_ins","matrices_ver","inc_equipo_upd","escalamientos_upd","config_upd","incidentes_upd","sla_avisos","solicitudes_ins","solicitudes_upd",
     "asignaciones_liberar","escalamientos_detener","debates_ins","debates_upd","participantes_ins","participantes_upd",
     "mensajes_ins","mensajes_upd","incidentes_ins","notificaciones","notificaciones_leer","auditoria","correos",
-    "sesiones_ins","sesiones_cerrar","sesiones_revocar_otras","catalogo_servicios","inc_colaboradores_ins","colaboradores_del"];
+    "sesiones_ins","sesiones_cerrar","sesiones_revocar_otras","catalogo_servicios","inc_colaboradores_ins","colaboradores_del",
+    "pasos_ins","pasos_hechos","pasos_cancelar"];
 
   /* ---------- Utilidades ---------- */
   const txt    = v => String(v ?? "").trim();
@@ -407,8 +431,8 @@ const ReglasRBAC = (() => {
         historial: arr(raw.matrices_historial).filter(h => h.team_id === t.id).sort((a, b) => b.version - a.version).slice(0, 5)
           .map(h => ({ version:h.version, resumen:h.niveles.map(n => `N${n.nivel} ${n.espera_min}′`).join(" → "), reemplazada_en:iso(h.reemplazada_en) })),
         niveles: mx.niveles.map(n => ({ ...n, alcance_ahora: (a => ({ personas:a.personas.length, disponibles:a.disponibles.length, en_franja:a.en_franja, sin_telefono:a.sin_telefono.map(u => u.nombre) }))(alcanceNivel(raw, t.id, n, null, raw.ahora || Date.now())),
-          destinos: n.destinos.map(d => d.tipo === "usuario"
-          ? { tipo:"usuario", id:d.id, nombre:usuario(raw, d.id)?.nombre || null } : { tipo:"rol", rol:d.rol }) })) } : null,
+          destinos: n.destinos.map(d => ({ ...(d.tipo === "usuario"
+            ? { tipo:"usuario", id:d.id, nombre:usuario(raw, d.id)?.nombre || null } : { tipo:"rol", rol:d.rol }), pasos:pasosDestino(n, d) })) })) } : null,
       // Campos de compatibilidad con GET /equipos de reglas-noc.js
       mi_rol: auth?.es_admin ? "ADMIN" : (miembro ? auth.rol : null),
       es_responsable: !!miembro?.es_responsable,
@@ -965,6 +989,10 @@ const ReglasRBAC = (() => {
     // Llamada en la matriz pero sin teléfono cargado: se guarda igual, con advertencia
     const advertencias = vm.niveles.flatMap(n => { const st = alcanceNivel(raw, t.id, n, null, k.ahora).sin_telefono;
       return st.length ? [`${t.nombre} · N${n.nivel}: ${st.map(u => u.nombre).join(", ")} no ${st.length === 1 ? "tiene" : "tienen"} teléfono cargado y no ${st.length === 1 ? "recibirá" : "recibirán"} la llamada`] : []; });
+    // Un paso que vence después de que arranca el nivel siguiente igual se manda (si nadie tomó el INC), pero conviene saberlo
+    vm.niveles.forEach((n, j) => { if (j === vm.niveles.length - 1) return;
+      const tarde = n.destinos.flatMap(d => pasosDestino(n, d)).filter(p => p.min >= n.espera_min);
+      if (tarde.length) advertencias.push(`${t.nombre} · N${n.nivel}: hay pasos a los ${unicos(tarde.map(p => p.min)).join(", ")} min y el nivel siguiente arranca a los ${n.espera_min} min (se mandan igual mientras nadie tome el INC)`); });
     if (mx && igual(mx.niveles, vm.niveles)) return { sin_cambios:true, advertencias };
     const id = k.id(), version = (mx?.versiones || mx?.version || 0) + 1;
     k.plan.matrices_ver.push({ id, team_id:t.id, version, version_anterior:mx?.version ?? null, niveles:vm.niveles });
@@ -1061,7 +1089,10 @@ const ReglasRBAC = (() => {
       usuario:{ id:auth.id, nombre:auth.nombre, email:auth.email, username:auth.username, rol:auth.rol,
                 es_admin:auth.es_admin, debe_cambiar_clave:auth.debe_cambiar_clave,
                 telefono: usuario(raw, auth.id).telefono ?? null, origen_clave: origenClave(usuario(raw, auth.id)),
-                disponibilidad: usuario(raw, auth.id).disponibilidad ?? null, disponibilidad_txt: textoDisponibilidad(usuario(raw, auth.id).disponibilidad) },
+                disponibilidad: usuario(raw, auth.id).disponibilidad ?? null, disponibilidad_txt: textoDisponibilidad(usuario(raw, auth.id).disponibilidad),
+                pasos: pasosPropios(usuario(raw, auth.id)) },
+      // Mi secuencia de avisos en cada matriz donde figuro: pasos fijos (matriz) + los míos, ya filtrados por perfil y teléfono
+      secuencias: misSecuencias(raw, usuario(raw, auth.id)),
       equipos: auth.equipos.map(x => ({ id:x.id, nombre:x.nombre, rol:x.rol, es_responsable:x.es_responsable })),
       permisos: permisosEfectivos(auth),
       notificaciones_perfil: TIPOS_NOTIF.map(([id, nombre]) => ({ id, nombre, canales:canalesPermitidos(raw, auth.rol, id) })),
@@ -1561,9 +1592,50 @@ const ReglasRBAC = (() => {
     [t, arr(raw.config?.politica_notificaciones?.[r.codigo]?.[t] ?? POLITICA_BASE[r.codigo]?.[t] ?? ["app"])]))]));
   // La llamada necesita un teléfono cargado; el resto de los canales no tiene requisitos en la app
   const puedeRecibir = (u, canal) => canal !== "llamada" || !!u.telefono;
-  // Canales por los que de verdad le llega un aviso de escalamiento a esta persona: matriz ∩ su perfil ∩ datos de contacto
-  const canalesEfectivos = (raw, u, n) => n.canales.filter(c => canalesPermitidos(raw, u.rol, "escalamiento").includes(c) && puedeRecibir(u, c));
+  /* ---------- Secuencia de avisos por destinatario ----------
+     Cada destinatario de un nivel tiene sus pasos [{ canal, min }] (min = minutos desde que arranca el nivel).
+     Una matriz vieja sin pasos: todos sus canales a los 0 minutos (igual que antes).
+     Cada persona puede SUMAR pasos propios (Perfil → Mi secuencia de avisos): nunca sacan los de la matriz.
+     Si un canal está en los dos, vale el minuto más temprano. Después filtran su perfil (política) y su teléfono. */
+  const MAX_PASOS = 5;
+  const pasosDestino = (n, d) => arr(d.pasos).length ? arr(d.pasos) : arr(n.canales).map(c => ({ canal:c, min:0 }));
+  const destinosDe = (u, n) => arr(n.destinos).filter(d => d.tipo === "usuario" ? d.id === u.id : d.rol === u.rol);
+  const pasosPropios = u => arr(u?.disponibilidad?.pasos);
+  function secuenciaPersona(raw, u, n, { conPropios = true } = {}){
+    const m = new Map();
+    for (const d of destinosDe(u, n)) for (const p of pasosDestino(n, d)) {
+      const y = m.get(p.canal);
+      if (!y || p.min < y.min) m.set(p.canal, { canal:p.canal, min:Number(p.min) || 0, origen:"matriz" });
+    }
+    if (!m.size) return [];                        // no es destinatario de este nivel: sus pasos propios no aplican
+    if (conPropios) for (const p of pasosPropios(u)) {
+      const y = m.get(p.canal);
+      if (!y) m.set(p.canal, { canal:p.canal, min:Number(p.min) || 0, origen:"personal" });
+      else if (p.min < y.min) y.min = Number(p.min) || 0;         // lo adelanta, pero sigue siendo de la matriz
+    }
+    const pol = canalesPermitidos(raw, u.rol, "escalamiento");
+    return [...m.values()].sort((a, b) => a.min - b.min || TODOS_CANALES.indexOf(a.canal) - TODOS_CANALES.indexOf(b.canal))
+      .map(p => ({ ...p, permitido: pol.includes(p.canal) && puedeRecibir(u, p.canal),
+                   motivo: !pol.includes(p.canal) ? "Tu perfil no recibe este canal" : !puedeRecibir(u, p.canal) ? "Sin teléfono cargado" : null }));
+  }
+  // Pasos que de verdad se mandan: matriz + propios ∩ su perfil ∩ datos de contacto
+  const secuenciaEfectiva = (raw, u, n) => secuenciaPersona(raw, u, n).filter(p => p.permitido).map(({ canal, min, origen }) => ({ canal, min, origen }));
+  const canalesEfectivos = (raw, u, n) => secuenciaEfectiva(raw, u, n).map(p => p.canal);
   const canalesPermitidos = (raw, rol, tipo) => politicaNotif(raw)[rol]?.[tipo || "general"] || [];
+  // Pasos propios: mismo formato que los de la matriz (0 a 5; cada canal una vez)
+  function validarPasos(lista){
+    if (!Array.isArray(lista)) return { error:"Indicá la lista de pasos" };
+    if (lista.length > MAX_PASOS) return { error:`Como máximo ${MAX_PASOS} pasos` };
+    const out = [];
+    for (const p of lista) {
+      const min = Number(p?.min);
+      if (!TODOS_CANALES.includes(p?.canal)) return { error:"Los canales son app, email, telegram y llamada" };
+      if (!Number.isInteger(min) || min < 0 || min > 1440) return { error:"Cada paso va de 0 a 1440 minutos" };
+      if (out.some(q => q.canal === p.canal)) return { error:"Cada canal puede estar una sola vez" };
+      out.push({ canal:p.canal, min });
+    }
+    return { pasos:out.sort((a, b) => a.min - b.min) };
+  }
   // Saca del plan las notificaciones que el perfil del destinatario no recibe (por tipo y canal)
   function filtrarNotificaciones(raw, plan){
     if (!plan?.notificaciones?.length) return plan;
@@ -1599,9 +1671,9 @@ const ReglasRBAC = (() => {
     const todos = destinatariosNivel(raw, teamId, n), personas = todos.filter(u => canalesEfectivos(raw, u, n).length);
     const en_franja = !n.horario || enHorario(n.horario, ahora) !== false;
     const disponibles = en_franja ? personas.filter(u => disponible(raw, u, prioridad, ahora)) : [];
-    // Tienen la llamada en la matriz y en su perfil, pero no cargaron teléfono: no los llaman
-    const sin_telefono = n.canales.includes("llamada")
-      ? todos.filter(u => canalesPermitidos(raw, u.rol, "escalamiento").includes("llamada") && !u.telefono) : [];
+    // Tienen la llamada en su secuencia de la matriz y en su perfil, pero no cargaron teléfono: no los llaman
+    const sin_telefono = todos.filter(u => !u.telefono && canalesPermitidos(raw, u.rol, "escalamiento").includes("llamada")
+      && secuenciaPersona(raw, u, n, { conPropios:false }).some(p => p.canal === "llamada"));
     return { personas, disponibles, en_franja, sin_telefono };
   }
   const textoDisponibilidad = d => {
@@ -1705,6 +1777,8 @@ const ReglasRBAC = (() => {
     }
     const run = corridaDe(raw, inc, teamId);
     if (run && run.estado === "esperando") k.plan.escalamientos_upd.push({ ...run, estado:"fin", motivo:"reconocido", proximo_en:null, fin_en:k.ahora });
+    // Se corta lo que faltaba de la secuencia: pasos programados y correos o llamadas que n8n todavía no retiró
+    k.plan.pasos_cancelar.push({ inc, team_id:teamId });
     k.aud(accion === "tomar" ? "INC_TOMAR" : "INC_ACK", "incidente", inc, teamId,
       { antes:{ estado:st.estado_equipo, asignado_id:st.asignado_id || null }, despues:{ estado:"reconocido", asignado_id } },
       { datos:{ nivel_escalamiento: run?.nivel_actual ?? 0 } });
@@ -1843,6 +1917,11 @@ const ReglasRBAC = (() => {
     return k.exito(200, { tipo:"usuario", id:u.id }, { clave_cambiada:true });
   }
 
+  // Horario y pasos propios van juntos en users.disponibilidad: { horario?, criticos_siempre?, pasos? } (null = siempre y sin pasos)
+  const armarDisponibilidad = (horario, pasos) => {
+    const d = { ...(horario || {}), ...(arr(pasos).length ? { pasos } : {}) };
+    return Object.keys(d).length ? d : null;
+  };
   function editarDisponibilidad(e, auth, raw){
     const k = contexto(e, auth, raw, "usuario"), b = e.body;
     const no = sinSesion(k); if (no) return no;
@@ -1853,10 +1932,38 @@ const ReglasRBAC = (() => {
       if (h.error) return k.fallo(422, "HORARIO_INVALIDO", h.error);
       disp = { horario:h.horario, criticos_siempre: b.criticos_siempre === true };
     } else if (b.modalidad !== "siempre") return k.fallo(400, "MODALIDAD_INVALIDA", "La modalidad debe ser siempre o franjas");
+    disp = armarDisponibilidad(disp, pasosPropios(u));           // cambiar el horario no borra mis pasos propios
     if (igual(u.disponibilidad ?? null, disp)) return k.exito(200, { tipo:"usuario", id:u.id }, { sin_cambios:true });
     k.plan.usuarios_upd.push({ id:u.id, disponibilidad:disp });
     k.aud("USUARIO_DISPONIBILIDAD_MODIFICADA", "usuario", u.id, null, { antes:u.disponibilidad ?? null, despues:disp });
     return k.exito(200, { tipo:"usuario", id:u.id });
+  }
+
+  // PUT /me/pasos { pasos:[{ canal, min }] } — WF47d: pasos que SUMO a mi secuencia de avisos (los de la matriz no se pueden sacar)
+  function editarPasos(e, auth, raw){
+    const k = contexto(e, auth, raw, "usuario");
+    const no = sinSesion(k); if (no) return no;
+    const u = usuario(raw, auth.id), v = validarPasos(e.body.pasos);
+    if (v.error) return k.fallo(422, "PASOS_INVALIDOS", v.error);
+    const d = u.disponibilidad || {}, horario = d.horario ? { horario:d.horario, criticos_siempre:!!d.criticos_siempre } : null;
+    const disp = armarDisponibilidad(horario, v.pasos);
+    const pol = canalesPermitidos(raw, u.rol, "escalamiento");
+    const advertencias = [
+      ...v.pasos.filter(p => !pol.includes(p.canal)).map(p => `Tu perfil no recibe escalamientos por ${p.canal}: ese paso no se va a mandar`),
+      ...(v.pasos.some(p => p.canal === "llamada") && !u.telefono ? ["No tenés teléfono cargado: la llamada no se va a hacer hasta que lo cargues"] : [])];
+    if (igual(pasosPropios(u), v.pasos)) return k.exito(200, { tipo:"usuario", id:u.id }, { sin_cambios:true, advertencias });
+    k.plan.usuarios_upd.push({ id:u.id, disponibilidad:disp });
+    k.aud("USUARIO_PASOS_MODIFICADOS", "usuario", u.id, null, { antes:{ pasos:pasosPropios(u) }, despues:{ pasos:v.pasos } });
+    return k.exito(200, { tipo:"usuario", id:u.id }, { pasos:v.pasos, advertencias });
+  }
+  // Para GET /me: en cada matriz activa, los niveles donde figuro con mis pasos (matriz y propios) y si se mandan
+  function misSecuencias(raw, u){
+    if (!u) return [];
+    return arr(raw.matrices).map(m => ({ m, t:equipo(raw, m.team_id) })).filter(x => x.t && x.t.estado === "activo").sort((a, b) => porNombre(a.t, b.t))
+      .map(({ m, t }) => ({ equipo:{ id:t.id, nombre:t.nombre }, version:m.version,
+        niveles: m.niveles.filter(n => destinatariosNivel(raw, t.id, n).some(x => x.id === u.id))
+          .map(n => ({ nivel:n.nivel, espera_min:n.espera_min, pasos:secuenciaPersona(raw, u, n) })).filter(n => n.pasos.length) }))
+      .filter(x => x.niveles.length);
   }
 
   /* WF20 (programado): avanza los escalamientos. En producción lo corre n8n (Wait por nivel o cron por minuto);
@@ -1865,7 +1972,16 @@ const ReglasRBAC = (() => {
     const k = contexto({ params:{}, query:{}, body:{}, meta, sistema:true }, null, raw, "escalamiento");
     const ahora = new Date(k.ahora).getTime(), factor = Math.max(1, Number(raw.config?.escalamiento_factor || 1));
     const en = m => new Date(ahora + Number(m) * 60000 / factor).toISOString();
-    const abiertos = arr(raw.incidentes), fin = (r, motivo) => k.plan.escalamientos_upd.push({ ...r, estado:"fin", motivo, proximo_en:null, fin_en:k.ahora });
+    const abiertos = arr(raw.incidentes), cortes = new Set();
+    // Corte de la secuencia de un INC y equipo (una vez por vuelta): pasos programados y avisos externos sin retirar
+    const cortar = (inc, teamId) => { const c = inc + "|" + teamId; if (!cortes.has(c)) { cortes.add(c); k.plan.pasos_cancelar.push({ inc, team_id:teamId }); } };
+    const fin = (r, motivo) => { k.plan.escalamientos_upd.push({ ...r, estado:"fin", motivo, proximo_en:null, fin_en:k.ahora }); if (motivo !== "agotado") cortar(r.inc, r.team_id); };
+    const textos = (i, t, nivelN) => ({
+      titulo:`${i.inc} · ${nombreCat(raw, i.prioridad)} · Escalamiento nivel ${nivelN} · ${t.nombre}`,
+      cuerpo:`${i.titulo}. Nadie lo tomó todavía: tocá Tomar para detener el escalamiento.`,
+      // Lo que dice la llamada (texto a voz en n8n). Con el 1 se toma el INC, igual que con el botón Tomar.
+      guion:`Escalamiento de Assurance Center. Incidente ${i.inc.replace(/^INC0*/, "")}, ${nombreCat(raw, i.prioridad)}, equipo ${t.nombre}. ` +
+        `${i.titulo}. Nadie lo tomó todavía. Presioná 1 para tomarlo o cortá para seguir el escalamiento.` });
     arr(raw.escalamientos_vivos).filter(r => r.estado === "esperando" && !abiertos.some(i => i.inc === r.inc && i.equipos.includes(r.team_id)))
       .forEach(r => fin(r, "incidente_cerrado"));
     for (const i of abiertos) {
@@ -1900,20 +2016,25 @@ const ReglasRBAC = (() => {
       run = { ...run };
       while (run.estado === "esperando" && new Date(run.proximo_en).getTime() <= ahora) {
         const n = run.niveles[run.nivel_actual], a = alcanceNivel(raw, teamId, n, i.prioridad, k.ahora);
-        const titulo = `${i.inc} · ${nombreCat(raw, i.prioridad)} · Escalamiento nivel ${n.nivel} · ${t.nombre}`;
-        const cuerpo = `${i.titulo}. Nadie lo tomó todavía: tocá Tomar para detener el escalamiento.`;
-        // Lo que dice la llamada (texto a voz en n8n). Con el 1 se toma el INC, igual que con el botón Tomar.
-        const guion = `Escalamiento de Assurance Center. Incidente ${i.inc.replace(/^INC0*/, "")}, ${nombreCat(raw, i.prioridad)}, equipo ${t.nombre}. ` +
-          `${i.titulo}. Nadie lo tomó todavía. Presioná 1 para tomarlo o cortá para seguir el escalamiento.`;
+        const { titulo, cuerpo, guion } = textos(i, t, n.nivel);
         const silenciados = a.en_franja ? a.personas.filter(u => !a.disponibles.includes(u)) : [];
-        a.disponibles.forEach(u => { const cs = canalesEfectivos(raw, u, n); cs.forEach(canal =>
-          k.plan.notificaciones.push({ user_id:u.id, team_id:teamId, canal, titulo, cuerpo, tipo:"escalamiento", enlace:"incidentes.html", inc:i.inc,
-            ...(canal === "llamada" ? { telefono:u.telefono, guion } : canal === "app" && cs.includes("llamada") ? { con_llamada:true } : {}) })); });
+        const programados = [];
+        a.disponibles.forEach(u => {
+          // Secuencia de cada persona: lo de los 0 minutos sale ya; el resto queda programado (escalamiento_pasos)
+          const seq = secuenciaEfectiva(raw, u, n), cs = seq.filter(p => !p.min).map(p => p.canal);
+          cs.forEach(canal => k.plan.notificaciones.push({ user_id:u.id, team_id:teamId, canal, titulo, cuerpo, tipo:"escalamiento", enlace:"incidentes.html", inc:i.inc,
+            ...(canal === "llamada" ? { telefono:u.telefono, guion } : canal === "app" && cs.includes("llamada") ? { con_llamada:true } : {}) }));
+          seq.filter(p => p.min > 0).forEach(p => {
+            k.plan.pasos_ins.push({ id:k.id(), run_id:run.id, inc:i.inc, team_id:teamId, user_id:u.id, nivel:n.nivel, canal:p.canal, vence_en:en(p.min) });
+            programados.push(`${u.nombre}: ${p.canal} ${p.min}′`);
+          });
+        });
         // Fuera de su horario: queda en la campana, sin aviso emergente ni correo/Telegram
         silenciados.forEach(u => k.plan.notificaciones.push({ user_id:u.id, team_id:teamId, canal:"app", titulo, cuerpo, tipo:"escalamiento", enlace:"incidentes.html", silenciosa:true, inc:i.inc }));
         k.aud(a.disponibles.length ? "ESC_NIVEL_NOTIFICADO" : "ESC_NIVEL_SIN_DISPONIBLES", "escalamiento", run.id, teamId, { antes:null, despues:{
           inc:i.inc, nivel:n.nivel, avisados:a.disponibles.map(u => u.nombre),
-          llamados:a.disponibles.filter(u => canalesEfectivos(raw, u, n).includes("llamada")).map(u => u.nombre), sin_telefono:a.sin_telefono.map(u => u.nombre), fuera_de_su_horario:silenciados.map(u => u.nombre), nivel_en_franja:a.en_franja } }, { justificacion:null });
+          llamados:a.disponibles.filter(u => canalesEfectivos(raw, u, n).includes("llamada")).map(u => u.nombre), sin_telefono:a.sin_telefono.map(u => u.nombre), fuera_de_su_horario:silenciados.map(u => u.nombre), nivel_en_franja:a.en_franja,
+          ...(programados.length ? { programados } : {}) } }, { justificacion:null });
         run.nivel_actual++;
         if (run.nivel_actual >= run.niveles.length) {
           Object.assign(run, { estado:"fin", motivo:"agotado", proximo_en:null, fin_en:k.ahora });
@@ -1925,6 +2046,28 @@ const ReglasRBAC = (() => {
       }
       k.plan.escalamientos_upd.push(run);
     }
+    // Pasos programados (el resto de cada secuencia): se mandan al vencer si el equipo sigue sin tomar el INC
+    // y la persona sigue habilitada (activa, destinataria, en su horario, en la franja del nivel, con el canal en su perfil)
+    const enviados = new Map();
+    for (const p of arr(raw.escalamiento_pasos).filter(x => !x.hecho_en && !x.cancelado_en)) {
+      const i = abiertos.find(x => x.inc === p.inc), t = equipo(raw, p.team_id);
+      if (!i || !i.equipos.includes(p.team_id) || !t || t.estado !== "activo" || incEquipo(raw, p.inc, p.team_id).estado_equipo !== "pendiente") { cortar(p.inc, p.team_id); continue; }
+      if (new Date(p.vence_en).getTime() > ahora) continue;
+      k.plan.pasos_hechos.push(p.id);
+      const u = usuario(raw, p.user_id), run = corridaDe(raw, p.inc, p.team_id), n = arr(run?.niveles).find(x => x.nivel === p.nivel);
+      const ok = u && u.estado === "activo" && n && destinatariosNivel(raw, p.team_id, n).some(x => x.id === u.id)
+        && disponible(raw, u, i.prioridad, k.ahora) && (!n.horario || enHorario(n.horario, k.ahora) !== false)
+        && canalesPermitidos(raw, u.rol, "escalamiento").includes(p.canal) && puedeRecibir(u, p.canal);
+      const r = enviados.get(run?.id || p.inc + p.team_id) || { run, i, t, enviados:[], omitidos:[] };
+      enviados.set(run?.id || p.inc + p.team_id, r);
+      if (!ok) { r.omitidos.push(`${u?.nombre || "?"}: ${p.canal}`); continue; }
+      const { titulo, cuerpo, guion } = textos(i, t, p.nivel);
+      k.plan.notificaciones.push({ user_id:u.id, team_id:p.team_id, canal:p.canal, titulo, cuerpo, tipo:"escalamiento", enlace:"incidentes.html", inc:i.inc,
+        ...(p.canal === "llamada" ? { telefono:u.telefono, guion } : {}) });
+      r.enviados.push(`${u.nombre}: ${p.canal}`);
+    }
+    for (const [id, r] of enviados) k.aud("ESC_PASO_NOTIFICADO", "escalamiento", r.run?.id || id, r.t.id,
+      { antes:null, despues:{ inc:r.i.inc, enviados:r.enviados, ...(r.omitidos.length ? { omitidos:r.omitidos } : {}) } }, { justificacion:null });
     return filtrarNotificaciones(raw, k.plan);
   }
 
@@ -2261,7 +2404,7 @@ const ReglasRBAC = (() => {
   const OPERACIONES = {
     solicitarAlta, resolverSolicitud, crearUsuario, modificarUsuario, resetearClave, cambiarRol, cambiarEstadoUsuario,
     agregarIntegrantes, removerIntegrante, reemplazarEquiposUsuario, cambiarResponsable,
-    crearEquipo, modificarEquipo, modificarCatalogo, cambiarEstadoEquipo, editarMatriz, editarMatrizMasiva, accionIncidente, editarDisponibilidad, editarTelefono, verPoliticaNotif, editarPoliticaNotif, verClasificacion, editarClasificacion, cambiarCategoriaInc, verServicios, guardarServicio,
+    crearEquipo, modificarEquipo, modificarCatalogo, cambiarEstadoEquipo, editarMatriz, editarMatrizMasiva, accionIncidente, editarDisponibilidad, editarTelefono, editarPasos, verPoliticaNotif, editarPoliticaNotif, verClasificacion, editarClasificacion, cambiarCategoriaInc, verServicios, guardarServicio,
     me, listarUsuarios, verUsuario, equiposDeUsuario, listarSolicitudes, listarEquipos, verEquipo, integrantesDeEquipo,
     listarRoles, verRol, consultarAuditoria,
     listarDebates, abrirDebate, verDebate, unirseDebate, salirDebate, enviarMensaje, eliminarMensaje, cerrarDebate, verAdjunto,
@@ -2376,6 +2519,7 @@ const ReglasRBAC = (() => {
     { wf:"WF47a", nombre:"Tomar o reconocer un INC (por equipo)",  metodo:"POST",  ruta:"incidentes/:inc/acciones",           operacion:"accionIncidente",          tipo:"escritura" },
     { wf:"WF47b", nombre:"Mi horario de avisos",               metodo:"PUT",   ruta:"me/disponibilidad",                  operacion:"editarDisponibilidad",     tipo:"escritura" },
     { wf:"WF47c", nombre:"Mi teléfono para llamadas",          metodo:"PUT",   ruta:"me/telefono",                        operacion:"editarTelefono",           tipo:"escritura" },
+    { wf:"WF47d", nombre:"Mi secuencia de avisos (pasos propios)", metodo:"PUT", ruta:"me/pasos",                        operacion:"editarPasos",              tipo:"escritura" },
     { wf:"WF20",  nombre:"Motor de escalamiento",              metodo:null,    ruta:null,                                 operacion:"avanzarEscalamientos",     tipo:"programado" },
     { wf:"WF48a", nombre:"Notificaciones por perfil (ver)",    metodo:"GET",   ruta:"notificaciones/politica",            operacion:"verPoliticaNotif",         tipo:"lectura" },
     { wf:"WF48b", nombre:"Notificaciones por perfil (editar)", metodo:"PUT",   ruta:"notificaciones/politica",            operacion:"editarPoliticaNotif",      tipo:"escritura" },
@@ -2708,7 +2852,9 @@ const SimuladorRBAC = (() => {
     });
   }
   const foto = (e, ahora) => ({ ...Object.fromEntries(CLAVES_RAW.map(k => [k, e[k] || []])), config:e.config, incidentes:incidentesAbiertos(e),
-    notificaciones:e.notificaciones.filter(n => n.canal === "app"), ahora });
+    notificaciones:e.notificaciones.filter(n => n.canal === "app"), ahora,
+    // Pasos programados de las secuencias de aviso que todavía no salieron (como noc_foto, SQL 031)
+    escalamiento_pasos:(e.escalamiento_pasos || []).filter(p => !p.hecho_en && !p.cancelado_en) });
   // Adjuntos: fuera del estado principal (cada uno en su propia clave)
   function leerAdjunto(id){ try { const v = localStorage.getItem(CLAVE_ADJ + id); if (v) return v; } catch {} return adjMemoria[id] || null; }
   function guardarAdjuntos(lista){
@@ -2893,7 +3039,19 @@ const SimuladorRBAC = (() => {
     }
     const incidentesNuevos = L("incidentes_ins").map(c => ({ inc:c.inc, titulo:c.titulo, prioridad:c.prioridad, servicios:c.servicios, inicio:c.inicio, grave:c.grave || "no" }));
     if (incidentesNuevos.length && !tableroDemo()) e.incidentes_demo = [...(e.incidentes_demo || []), ...incidentesNuevos];
-    for (const c of L("notificaciones")) e.notificaciones.push({ id:"n" + (e.notificaciones.length + 1), ...c, created_at:ahora, leida_en:null });
+    for (const c of L("notificaciones")) e.notificaciones.push({ id:"n" + (e.notificaciones.length + 1), ...c, created_at:ahora, leida_en:null,
+      estado_envio: c.canal === "app" ? "enviada" : "pendiente" });
+    // Secuencias de aviso (SQL 031): pasos programados, pasos ya mandados y corte al tomar o cerrar el INC
+    e.escalamiento_pasos ||= [];
+    for (const c of L("pasos_ins")) if (!e.escalamiento_pasos.some(x => x.id === c.id)) e.escalamiento_pasos.push({ ...c, hecho_en:null, cancelado_en:null });
+    for (const id of L("pasos_hechos")) { const x = e.escalamiento_pasos.find(y => y.id === id && !y.hecho_en && !y.cancelado_en); if (x) x.hecho_en = ahora; }
+    for (const c of L("pasos_cancelar")) {
+      e.escalamiento_pasos.filter(x => x.inc === c.inc && x.team_id === c.team_id && !x.hecho_en && !x.cancelado_en).forEach(x => { x.cancelado_en = ahora; });
+      e.notificaciones.filter(n => n.inc === c.inc && n.team_id === c.team_id && n.tipo === "escalamiento" && n.canal !== "app" && n.estado_envio === "pendiente")
+        .forEach(n => { n.estado_envio = "cancelada"; });
+    }
+    // Como noc_limpiar: lo ya resuelto no se guarda para siempre
+    e.escalamiento_pasos = e.escalamiento_pasos.filter(x => !(x.hecho_en || x.cancelado_en) || Date.parse(ahora) - Date.parse(x.hecho_en || x.cancelado_en) < 86400000);
     for (const id of L("notificaciones_leer")) { const n = e.notificaciones.find(x => String(x.id) === String(id)); if (n && !n.leida_en) n.leida_en = ahora; }
     for (const c of L("auditoria")) e.audit_log.push({ id:++e.seq.audit, ts:ahora, ...c, origen:plan.origen || "DEMO", execution_id:plan.execution_id || null });
 
