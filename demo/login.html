@@ -42,6 +42,8 @@
      (lo manda el n8n de la empresa; el NOC no conoce el correo) → POST /auth/login { usuario, clave:<código> }.
    · Con clave (cuentas de emergencia y la demo): POST /auth/login { usuario, clave }. Si es temporal, pide cambiarla (POST /me/clave). */
 const ss = sessionStorage, params = new URLSearchParams(location.search);
+// Service worker también en el ingreso: Chrome lo necesita para ofrecer "Instalar app" (y para los avisos push)
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 const DESTINO = "escritorio.html";
 const local = CONFIG.MODO_DATOS === "local";
 let estado = params.get("cambio") === "1" && ss.getItem("token") ? "cambio" : "ingreso";

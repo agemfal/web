@@ -1,8 +1,17 @@
 /* Service worker de Assurance Center: muestra las notificaciones push aunque la página esté cerrada
    o el celular con la pantalla apagada. No guarda nada en caché ni toca datos: solo recibe el aviso
-   (que llega cifrado de punta a punta) y, al tocarlo, abre la pantalla que corresponde. */
+   (que llega cifrado de punta a punta) y, al tocarlo, abre la pantalla que corresponde.
+   Las cargas de pantalla (navegación) pasan directo a internet: algunas versiones de Chrome piden un manejador
+   de "fetch" para ofrecer "Instalar app". No intercepta la API ni guarda respuestas. */
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
+
+self.addEventListener("fetch", e => {
+  if (e.request.mode !== "navigate") return;            // solo las pantallas; lo demás sigue su camino normal
+  e.respondWith(fetch(e.request).catch(() => new Response(
+    "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><body style='font-family:system-ui;background:#0b0f17;color:#e6edf3;padding:24px'><h1>Sin conexión</h1><p>Revisá internet y volvé a abrir Assurance Center.</p>",
+    { headers:{ "Content-Type":"text/html; charset=utf-8" } })));
+});
 
 self.addEventListener("push", e => {
   let d = {};
