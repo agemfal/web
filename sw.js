@@ -11,7 +11,10 @@ self.addEventListener("push", e => {
   const url = /^[a-z-]+\.html([?#][^\s]*)?$/.test(String(d.url || "")) ? d.url : "escritorio.html";   // solo pantallas propias
   e.waitUntil(self.registration.showNotification(titulo, {
     body: String(d.cuerpo || "").slice(0, 160),
-    tag: d.tag || "aviso", renotify: true,
+    tag: d.tag || "aviso", renotify: true, silent: false,
+    // Escalamientos y convocatorias: vibración larga y quedan en pantalla hasta tocarlos. Chats: vibración corta.
+    vibrate: d.tag === "avisos" ? [400, 150, 400, 150, 400] : [150, 80, 150],
+    requireInteraction: d.tag === "avisos",
     icon: "icono.svg", badge: "icono.svg",
     data: { url: new URL(url, self.registration.scope).href },
   }));
