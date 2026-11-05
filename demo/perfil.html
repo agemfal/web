@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0b0f17">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icono.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icono.svg">
+<link rel="apple-touch-icon" href="icono-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Perfil</title>
 <script src="ux.js?v=1"></script>
@@ -97,6 +97,8 @@ App.iniciar({
           <small>${esc(yo ? yo.usuario.disponibilidad_txt : "…")} · tocá para cambiarlo</small></span><span class="lado">${icono("flecha")}</span></li>`,
         `<li class="info clic" data-accion="alarma-sw"><span class="ic">${icono("alerta")}</span><span class="cuerpo"><b>Alarma en pantalla</b>
           <small>${App.alarmaOn() ? "Activada" : "Desactivada"}: los escalamientos y SLA vencidos suenan y vibran hasta que actuás · tocá para ${App.alarmaOn() ? "desactivarla" : "activarla"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        App.instalada() ? "" : `<li class="info clic" data-accion="instalar"><span class="ic">${icono("subir")}</span><span class="cuerpo"><b>Instalar la app</b>
+          <small>Queda un ícono en el celular, se abre a pantalla completa y (en iPhone) hace falta para los avisos con la pantalla apagada</small></span><span class="lado">${icono("flecha")}</span></li>`,
         `<li class="info clic" data-accion="push-sw"><span class="ic">${icono("telefono")}</span><span class="cuerpo"><b>Avisos con la pantalla apagada</b>
           <small>${App.pushActivo() ? "Activados en este dispositivo" : "Desactivados"}: escalamientos, convocatorias y mensajes de tus chats te llegan como notificación del celular aunque no tengas la página abierta · tocá para ${App.pushActivo() ? "desactivarlos" : "activarlos"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
         App.pushActivo() ? `<li class="info clic" data-accion="push-probar"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Probar los avisos</b>
@@ -147,6 +149,7 @@ App.iniciar({
     if (id === "horario") { editarHorario(); return true; }
     if (id === "telefono") { editarTelefono(); return true; }
     if (id === "alarma-sw") { App.alarmaConfigurar(!App.alarmaOn()); App.aviso(App.alarmaOn() ? "Alarma activada" : "Alarma desactivada", 2500); App.redibujar(); return true; }
+    if (id === "instalar") { App.instalarApp(); return true; }
     if (id === "push-sw") { (App.pushActivo() ? App.pushDesactivar() : App.pushActivar()).then(() => App.redibujar()); return true; }
     if (id === "push-probar") { App.pushProbar(); return true; }
     if (id === "chat-sonido") { App.chatSonidoConfigurar(!App.chatSonidoOn()); if (App.chatSonidoOn()) { App.sonarChat(); App.avisoChat({ titulo:"INC000000000 · Prueba", texto:"Así te va a avisar un mensaje nuevo", href:"chats.html" }); } App.redibujar(); return true; }

@@ -435,7 +435,10 @@ const App = {
     this.armarEstructura();
     this.cargar(false);
     // Service worker: para recibir notificaciones push con la página cerrada (solo con la API real)
-    if (CONFIG.MODO_DATOS !== "local" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    // (también en la demo: Chrome lo usa para ofrecer "Instalar app")
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    window.addEventListener("beforeinstallprompt", ev => { ev.preventDefault(); App._instalar = ev; App.pagina?.alInstalable?.(); });
+    window.addEventListener("appinstalled", () => { App._instalar = null; App.aviso("App instalada: abrila desde el ícono de Assurance Center", 5000); });
     // RBAC: rol, nombre y permisos los decide el backend (GET /me)
     if (hayModuloRBAC()) {
       this.sincronizarSesion().then(d => { if (d && this.datos) this.redibujar(); });
@@ -628,6 +631,15 @@ const App = {
      Web Push estándar con el service worker sw.js. La persona lo activa en Perfil (el navegador pide permiso).
      El servidor manda un aviso corto (INC y qué pasó, nunca el texto del mensaje) cifrado de punta a punta.
      En iPhone solo funciona con la página instalada (Compartir → Agregar a inicio). */
+  // Instalar como app (Android/PC con Chrome o Edge). En iPhone: Compartir → Agregar a inicio.
+  _instalar: null,
+  instalada(){ return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; },
+  async instalarApp(){
+    if (this.instalada()) return this.aviso("Ya la estás usando como app", 3000);
+    if (this._instalar) { this._instalar.prompt(); await this._instalar.userChoice.catch(() => null); this._instalar = null; return; }
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent)) return this.aviso("En iPhone: tocá Compartir (el cuadrado con la flecha) → «Agregar a inicio»", 8000);
+    this.aviso("Abrí el menú de Chrome (⋮) → «Instalar app» o «Agregar a la pantalla principal»", 8000);
+  },
   pushSoportado(){ return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; },
   esIOSsinInstalar(){
     return /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia("(display-mode: standalone)").matches;
