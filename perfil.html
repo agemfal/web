@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f17">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icono.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icono.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Perfil</title>
 <script src="ux.js?v=1"></script>
 <link rel="stylesheet" href="estilos.css">
@@ -93,6 +97,10 @@ App.iniciar({
           <small>${esc(yo ? yo.usuario.disponibilidad_txt : "…")} · tocá para cambiarlo</small></span><span class="lado">${icono("flecha")}</span></li>`,
         `<li class="info clic" data-accion="alarma-sw"><span class="ic">${icono("alerta")}</span><span class="cuerpo"><b>Alarma en pantalla</b>
           <small>${App.alarmaOn() ? "Activada" : "Desactivada"}: los escalamientos y SLA vencidos suenan y vibran hasta que actuás · tocá para ${App.alarmaOn() ? "desactivarla" : "activarla"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        `<li class="info clic" data-accion="push-sw"><span class="ic">${icono("telefono")}</span><span class="cuerpo"><b>Avisos con la pantalla apagada</b>
+          <small>${App.pushActivo() ? "Activados en este dispositivo" : "Desactivados"}: escalamientos, convocatorias y mensajes de tus chats te llegan como notificación del celular aunque no tengas la página abierta · tocá para ${App.pushActivo() ? "desactivarlos" : "activarlos"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
+        App.pushActivo() ? `<li class="info clic" data-accion="push-probar"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Probar los avisos</b>
+          <small>Te manda una notificación de prueba a este dispositivo</small></span><span class="lado">${icono("flecha")}</span></li>` : "",
         `<li class="info clic" data-accion="chat-sonido"><span class="ic">${icono("mensaje")}</span><span class="cuerpo"><b>Sonido de mensajes</b>
           <small>${App.chatSonidoOn() ? "Activado" : "Desactivado"}: un "tin" suave y un aviso arriba cuando llega un mensaje a un chat · tocá para ${App.chatSonidoOn() ? "desactivarlo" : "activarlo"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
         `<li class="info clic" data-accion="alarma-probar"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Probar la alarma</b>
@@ -139,6 +147,8 @@ App.iniciar({
     if (id === "horario") { editarHorario(); return true; }
     if (id === "telefono") { editarTelefono(); return true; }
     if (id === "alarma-sw") { App.alarmaConfigurar(!App.alarmaOn()); App.aviso(App.alarmaOn() ? "Alarma activada" : "Alarma desactivada", 2500); App.redibujar(); return true; }
+    if (id === "push-sw") { (App.pushActivo() ? App.pushDesactivar() : App.pushActivar()).then(() => App.redibujar()); return true; }
+    if (id === "push-probar") { App.pushProbar(); return true; }
     if (id === "chat-sonido") { App.chatSonidoConfigurar(!App.chatSonidoOn()); if (App.chatSonidoOn()) { App.sonarChat(); App.avisoChat({ titulo:"INC000000000 · Prueba", texto:"Así te va a avisar un mensaje nuevo", href:"chats.html" }); } App.redibujar(); return true; }
     if (id === "alarma-probar") { App.alarma({ id:"prueba", tipo:"escalamiento", titulo:"Prueba de alarma", cuerpo:"Así vas a ver y escuchar un escalamiento. Tocá Silenciar para cerrarla.", puede_tomar:false }, { prueba:true }); return true; }
     if (id === "clave") { cambiarClave(); return true; }

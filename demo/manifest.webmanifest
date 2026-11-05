@@ -1,0 +1,12 @@
+{
+  "name": "Assurance Center",
+  "short_name": "Assurance",
+  "description": "Gestión de incidentes y continuidad del servicio",
+  "start_url": "escritorio.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0f17",
+  "theme_color": "#0b0f17",
+  "lang": "es-AR",
+  "icons": [{ "src": "icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

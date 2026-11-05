@@ -434,6 +434,8 @@ const App = {
     document.addEventListener("visibilitychange", () => { if (!document.hidden && sessionStorage.getItem("token")) this.revisarNotificaciones(); });
     this.armarEstructura();
     this.cargar(false);
+    // Service worker: para recibir notificaciones push con la página cerrada (solo con la API real)
+    if (CONFIG.MODO_DATOS !== "local" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
     // RBAC: rol, nombre y permisos los decide el backend (GET /me)
     if (hayModuloRBAC()) {
       this.sincronizarSesion().then(d => { if (d && this.datos) this.redibujar(); });
@@ -620,6 +622,53 @@ const App = {
     const c = await this.api("GET", "/debates"), bc = $("#badgeChat");
     if (bc && c.cuerpo?.ok) { const n = c.cuerpo.data.no_leidos_total || 0; bc.hidden = !n; bc.textContent = n > 99 ? "99+" : n; }
     if (c.cuerpo?.ok) this.revisarChats(c.cuerpo.data);
+  },
+
+  /* ===== NOTIFICACIONES PUSH (pantalla apagada o en otra app) =====
+     Web Push estándar con el service worker sw.js. La persona lo activa en Perfil (el navegador pide permiso).
+     El servidor manda un aviso corto (INC y qué pasó, nunca el texto del mensaje) cifrado de punta a punta.
+     En iPhone solo funciona con la página instalada (Compartir → Agregar a inicio). */
+  pushSoportado(){ return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; },
+  esIOSsinInstalar(){
+    return /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia("(display-mode: standalone)").matches;
+  },
+  pushActivo(){ try { return localStorage.getItem("pushActivo") === "1"; } catch { return false; } },
+  async pushSuscripcion(){
+    if (!this.pushSoportado()) return null;
+    const reg = await navigator.serviceWorker.getRegistration();
+    return reg ? reg.pushManager.getSubscription() : null;
+  },
+  async pushActivar(){
+    if (CONFIG.MODO_DATOS === "local") return this.aviso("En la demo no hay servidor: las notificaciones push funcionan en la página real", 4500);
+    if (this.esIOSsinInstalar()) return this.aviso("En iPhone primero instalá la página: Compartir → «Agregar a inicio». Después activalo desde ahí", 8000);
+    if (!this.pushSoportado()) return this.aviso("Este navegador no admite notificaciones push", 4000);
+    const clave = await this.api("GET", "/push/clave");
+    if (!clave.cuerpo?.ok) return this.aviso(clave.cuerpo?.error?.mensaje || "No se pudo activar", 4500);
+    const permiso = await Notification.requestPermission();
+    if (permiso !== "granted") return this.aviso("No diste permiso de notificaciones. Se habilita desde la configuración del navegador para este sitio", 7000);
+    try {
+      const reg = await navigator.serviceWorker.register("sw.js");
+      await navigator.serviceWorker.ready;
+      const b = atob(clave.cuerpo.data.publica.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((clave.cuerpo.data.publica.length + 3) % 4));
+      const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:Uint8Array.from(b, c => c.charCodeAt(0)) });
+      const r = await this.api("POST", "/push/suscribir", sub.toJSON());
+      if (!r.cuerpo?.ok) return this.aviso(r.cuerpo?.error?.mensaje || "No se pudo activar", 4500);
+      try { localStorage.setItem("pushActivo", "1"); } catch {}
+      this.aviso("Listo: te vamos a avisar aunque tengas la pantalla apagada", 4000);
+      return true;
+    } catch (e) { this.aviso("No se pudo activar: " + (e.message || e), 5000); }
+  },
+  async pushDesactivar(){
+    try {
+      const sub = await this.pushSuscripcion();
+      if (sub) { await this.api("POST", "/push/baja", { endpoint:sub.endpoint }); await sub.unsubscribe(); }
+    } catch {}
+    try { localStorage.setItem("pushActivo", "0"); } catch {}
+    this.aviso("Avisos con la pantalla apagada desactivados", 3000);
+  },
+  async pushProbar(){
+    const r = await this.api("POST", "/push/probar");
+    this.aviso(r.cuerpo?.ok ? "Prueba enviada: bloqueá el celular y fijate si llega" : (r.cuerpo?.error?.mensaje || "No se pudo enviar"), 5000);
   },
 
   /* ===== MENSAJES NUEVOS EN LOS CHATS =====
