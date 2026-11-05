@@ -746,7 +746,12 @@ const App = {
       const res = await fetch(CONFIG.URL_API + ruta, { method:metodo, keepalive:!!opciones.keepalive,   // keepalive: envíos pendientes al salir de la página
         headers:{ Authorization:"Bearer " + sessionStorage.getItem("token"), "Content-Type":"application/json" },
         body: metodo === "GET" ? undefined : JSON.stringify(body || {}) });
-      if (res.status === 401 && ruta !== "/auth/logout") { sessionStorage.clear(); location.replace(CONFIG.URL_LOGIN); }
+      if (res.status === 401 && ruta !== "/auth/logout") {
+        // El ingreso consulta por qué se cerró (otro dispositivo o 3 horas) para avisarle a la persona
+        const viejo = sessionStorage.getItem("token"); sessionStorage.clear();
+        try { if (viejo) sessionStorage.setItem("tokenViejo", viejo); } catch {}
+        location.replace(CONFIG.URL_LOGIN);
+      }
       const cuerpo = await res.json();
       if (cuerpo?.error?.codigo === "CAMBIO_CLAVE_REQUERIDO") location.replace(CONFIG.URL_LOGIN + "?cambio=1");
       return { http:res.status, cuerpo };

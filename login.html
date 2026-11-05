@@ -224,6 +224,15 @@ async function salir(){
 
 // Ya hay sesión válida → directo a la app
 (async () => {
+  // Venimos de una sesión que se cerró sola: se explica por qué
+  const viejo = ss.getItem("tokenViejo");
+  if (viejo && !local) {
+    ss.removeItem("tokenViejo");
+    const m = await pedir("POST", "/auth/motivo", { token:viejo });
+    const motivo = m.cuerpo?.data?.motivo;
+    if (motivo === "otro_dispositivo") return dibujar("Tu sesión se cerró porque entraste con tu usuario desde otro dispositivo o navegador.");
+    if (motivo === "vencida") return dibujar("Tu sesión venció: por seguridad dura 3 horas. Volvé a ingresar.");
+  }
   if (estado === "ingreso" && ss.getItem("token") && ss.getItem("origenClave")) {
     const r = local ? SimuladorRBAC.atender({ metodo:"GET", ruta:"/api/me", token:ss.getItem("token") })
                     : await fetch(CONFIG.URL_API + "/me", { headers:{ Authorization:"Bearer " + ss.getItem("token") } })
