@@ -716,3 +716,20 @@ details.demo summary{cursor:pointer; font-weight:600; min-height:32px; display:f
 /* Botón de tema (☀ / ☾): en el encabezado, y flotante en el ingreso */
 .tema-btn svg{width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round}
 .tema-flotante{position:fixed; top:calc(var(--s3) + env(safe-area-inset-top)); right:var(--s3); z-index:30}
+
+/* 25 · Aviso de mensaje nuevo en un chat: tarjeta flotante arriba, no bloquea (solo la tarjeta recibe toques) */
+.avisos-chat{position:fixed; top:calc(env(safe-area-inset-top) + 12px); left:50%; transform:translateX(-50%); z-index:45;
+  display:flex; flex-direction:column; gap:8px; width:min(420px, calc(100vw - 32px)); pointer-events:none}
+.aviso-chat{display:flex; align-items:stretch; background:var(--panel); color:var(--texto); border:1px solid var(--borde-fuerte);
+  border-left:4px solid var(--acento); border-radius:12px; box-shadow:var(--sombra); pointer-events:auto;
+  opacity:0; transform:translateY(-10px); transition:opacity .2s, transform .2s}
+.aviso-chat.on{opacity:1; transform:none}
+.aviso-chat-cuerpo{flex:1; min-width:0; display:flex; gap:10px; align-items:flex-start; padding:10px 4px 10px 12px; color:inherit; text-decoration:none; min-height:var(--objetivo, 44px)}
+.aviso-chat-cuerpo .ic{flex:none; color:var(--acento); margin-top:2px}
+.aviso-chat-cuerpo .ic svg{width:20px; height:20px}
+.aviso-chat-cuerpo > span:last-child{flex:1; min-width:0}
+.aviso-chat-cuerpo b{display:block; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.aviso-chat-cuerpo small{display:block; font-size:13px; color:var(--suave); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.aviso-chat-cuerpo small.mas{font-size:12px}
+.aviso-chat-x{flex:none; background:none; border:0; color:var(--suave); font-size:22px; line-height:1; width:var(--objetivo, 44px); cursor:pointer}
+@media (prefers-reduced-motion:reduce){ .aviso-chat{transition:none} }

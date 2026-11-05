@@ -619,6 +619,59 @@ const App = {
     // Mensajes sin leer en los chats de los INC (ícono de chat del encabezado)
     const c = await this.api("GET", "/debates"), bc = $("#badgeChat");
     if (bc && c.cuerpo?.ok) { const n = c.cuerpo.data.no_leidos_total || 0; bc.hidden = !n; bc.textContent = n > 99 ? "99+" : n; }
+    if (c.cuerpo?.ok) this.revisarChats(c.cuerpo.data);
+  },
+
+  /* ===== MENSAJES NUEVOS EN LOS CHATS =====
+     Sonido corto y suave (distinto de la alarma) y una tarjeta flotante arriba que no tapa nada ni pide respuesta:
+     se va sola, y si la tocás abre el chat. No avisa del chat que ya tenés abierto ni de tus propios mensajes.
+     Se apaga el sonido en Perfil ("Sonido de mensajes"). */
+  chatSonidoOn(){ try { return localStorage.getItem("sonidoChat") !== "0"; } catch { return true; } },
+  chatSonidoConfigurar(on){ try { localStorage.setItem("sonidoChat", on ? "1" : "0"); } catch {} },
+  sonarChat(){
+    const c = this.desbloquearAudio();
+    if (!c || c.state !== "running") return false;
+    // "Tin-tin" suave: dos notas senoidales cortas y a bajo volumen
+    [[880, 0], [1318.5, .12]].forEach(([hz, t]) => {
+      const o = c.createOscillator(), g = c.createGain(), ini = c.currentTime + t;
+      o.type = "sine"; o.frequency.value = hz;
+      g.gain.setValueAtTime(.0001, ini); g.gain.exponentialRampToValueAtTime(.12, ini + .01);
+      g.gain.exponentialRampToValueAtTime(.0001, ini + .35);
+      o.connect(g).connect(c.destination); o.start(ini); o.stop(ini + .36);
+    });
+    try { if (navigator.userActivation?.hasBeenActive !== false) navigator.vibrate?.(60); } catch {}
+    return true;
+  },
+  avisoChat({ titulo, texto, href, extra = 0 }){
+    let caja = $("#avisosChat");
+    if (!caja) { caja = document.createElement("div"); caja.id = "avisosChat"; caja.className = "avisos-chat"; caja.setAttribute("aria-live", "polite"); document.body.append(caja); }
+    const el = document.createElement("div");
+    el.className = "aviso-chat";
+    el.innerHTML = `<a class="aviso-chat-cuerpo" href="${esc(href)}"><span class="ic">${icono("mensaje")}</span>
+        <span><b>${esc(titulo)}</b>${texto ? `<small>${esc(texto)}</small>` : ""}${extra ? `<small class="mas">y ${extra} chat${extra === 1 ? "" : "s"} más con mensajes nuevos</small>` : ""}</span></a>
+      <button type="button" class="aviso-chat-x" aria-label="Cerrar aviso">×</button>`;
+    const quitar = () => { el.classList.remove("on"); setTimeout(() => el.remove(), 250); };
+    el.querySelector(".aviso-chat-x").onclick = quitar;
+    caja.append(el);
+    while (caja.children.length > 2) caja.firstElementChild.remove();
+    requestAnimationFrame(() => el.classList.add("on"));
+    setTimeout(quitar, 7000);
+  },
+  revisarChats(data){
+    const lista = [...(data.incidentes || []).map(i => i.debate).filter(Boolean), ...(data.otros_debates || [])];
+    let vistos = null;
+    try { vistos = JSON.parse(sessionStorage.getItem("chatVistos") || "null"); } catch {}
+    const primeraVez = !vistos; vistos ||= {};
+    const yo = sessionStorage.getItem("nombre") || "";
+    const abierto = /debate\.html$/.test(location.pathname) ? new URLSearchParams(location.search).get("id") : null;
+    const nuevos = lista.filter(d => d.no_leidos > 0 && d.ultimo?.en && d.ultimo.en !== vistos[d.id] && d.ultimo.autor !== yo && d.id !== abierto);
+    lista.forEach(d => { if (d.ultimo?.en) vistos[d.id] = d.ultimo.en; });
+    try { sessionStorage.setItem("chatVistos", JSON.stringify(vistos)); } catch {}
+    if (primeraVez || !nuevos.length) return;
+    nuevos.sort((a, b) => String(b.ultimo.en).localeCompare(String(a.ultimo.en)));
+    const d = nuevos[0];
+    this.avisoChat({ titulo:`${d.inc} · ${d.ultimo.autor || "Mensaje nuevo"}`, texto:d.ultimo.texto, href:"debate.html?id=" + encodeURIComponent(d.id), extra:nuevos.length - 1 });
+    if (this.chatSonidoOn() && !this._alarma) this.sonarChat();     // con la alarma sonando, no se superpone
   },
 
   async api(metodo, ruta, body, opciones = {}){
