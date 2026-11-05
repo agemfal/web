@@ -24,6 +24,56 @@ const enlace = (href, ic, titulo, detalle) => `<li class="info"><a class="enlace
   <span class="lado">${icono("flecha")}</span></a></li>`;
 const demo = () => CONFIG.MODO_DATOS === "local" && typeof SimuladorRBAC !== "undefined";
 let yo = null, demoAbierto = false;   // GET /me (incluye mi horario de avisos)
+/* ===== Notificaciones: estado REAL (navegador + servidor), no lo que quedó anotado ===== */
+let notif = null;   // { modo, permiso, suscripto, servidor, instalada }
+async function cargarNotif(){
+  const n = { modo:CONFIG.MODO_DATOS, permiso: "Notification" in window ? Notification.permission : "no_soportado",
+              soportado: App.pushSoportado(), suscripto:false, servidor:null, configurado:true, instalada:App.instalada(), ios:App.esIOSsinInstalar() };
+  if (n.modo !== "local" && n.soportado) {
+    try { n.suscripto = !!(await App.pushSuscripcion()); } catch {}
+    const r = await App.api("GET", "/push/estado");
+    if (r.cuerpo?.ok) n.servidor = r.cuerpo.data.dispositivos;
+    else if (r.cuerpo?.error?.codigo === "PUSH_DESHABILITADO") n.configurado = false;
+  }
+  // Activos de verdad = permiso dado + suscripción en este navegador + el servidor la tiene
+  n.push = n.permiso === "granted" && n.suscripto && n.servidor > 0;
+  try { localStorage.setItem("pushActivo", n.push ? "1" : "0"); } catch {}
+  notif = n; App.redibujar();
+}
+function estadoPush(){
+  const n = notif;
+  if (!n) return ["info", "…", "Revisando el estado"];
+  if (n.modo === "local") return ["info", "Demo", "En la demo no hay servidor: funciona en la página real"];
+  if (!n.soportado) return ["warn", "No admite", n.ios ? "En iPhone: instalá la app (Compartir → Agregar a inicio) y abrila desde el ícono" : "Probá con Chrome"];
+  if (!n.configurado) return ["warn", "Sin configurar", "El servidor no tiene configurados los avisos: avisale al Administrador"];
+  if (n.permiso === "denied") return ["crit", "Bloqueados", "El navegador los bloqueó: Configuración del sitio → Notificaciones → Permitir"];
+  if (n.push) return ["ok", "Activos", `Activos en este dispositivo · ${n.servidor} dispositivo${n.servidor === 1 ? "" : "s"} en total · tocá para desactivarlos`];
+  if (n.suscripto || n.servidor > 0) return ["warn", "Incompletos", "Faltan en este dispositivo: tocá para activarlos de nuevo"];
+  return ["info", "Apagados", "Escalamientos, convocatorias, menciones y mensajes de tus chats · tocá para activarlos"];
+}
+// Desactivar un aviso pide DOS confirmaciones (para no apagarlo sin querer en medio de un turno)
+async function confirmarDoble(que, consecuencia){
+  const a = await App.formulario({ titulo:`¿Desactivar ${que}?`, enviar:"Continuar", campos:[{ tipo:"nota", texto:consecuencia }] });
+  if (!a) return false;
+  const b = await App.formulario({ titulo:"Confirmá que querés desactivarlo", enviar:"Sí, desactivar", peligro:true,
+    campos:[{ tipo:"nota", texto:`Vas a dejar de recibir: ${que}. Lo podés volver a activar desde acá cuando quieras.` }] });
+  return !!b;
+}
+function ayudaSonido(){
+  App.ventana({ titulo:"Si el aviso no suena", subtitulo:"Se configura en el celular, no en la página", copiar:false, texto:[
+    "Android:",
+    "1. Ajustes → Aplicaciones → Assurance Center (o Chrome) → Notificaciones.",
+    "2. Activá «Permitir sonido y vibración» o elegí «Alerta» (no «Silencioso»).",
+    "3. Entrá a la categoría (General / agemfal.github.io), elegí un sonido e importancia «Alta» o «Urgente».",
+    "4. Revisá que el celular no esté en «No molestar» y que el volumen de notificaciones no esté en cero.",
+    "",
+    "iPhone:",
+    "1. Instalá la app (Compartir → Agregar a inicio) y abrila desde el ícono.",
+    "2. Ajustes → Notificaciones → Assurance Center → Permitir notificaciones y Sonidos.",
+    "3. Revisá que no esté activo un modo de Concentración."
+  ].join("\n") });
+}
+
 async function cargarYo(){ const r = await App.api("GET", "/me"); if (r.cuerpo?.ok) { yo = r.cuerpo.data; App.redibujar(); } }
 
 // Horario armado "laboral": L–V 8:00–20:00
@@ -93,30 +143,32 @@ App.iniciar({
       ${falta ? C.tarjeta({ clase:"crit", cuerpo: C.vacio("No se cargó el módulo de usuarios del demo: copiá rbac-demo.js en la misma carpeta que app.js y recargá con Ctrl+F5.", "alerta") }) : ""}
       ${C.tarjeta({ titulo:"Mi cuenta", iconoTit:"usuario", cuerpo: C.lista([
         C.item({ estado:"info", icono:"usuario", titulo: App.usuario, detalle: ROLES_TXT[App.rol] || App.rol }),
-        `<li class="info clic" data-accion="horario"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Mi horario de avisos</b>
-          <small>${esc(yo ? yo.usuario.disponibilidad_txt : "…")} · tocá para cambiarlo</small></span><span class="lado">${icono("flecha")}</span></li>`,
-        `<li class="info clic" data-accion="alarma-sw"><span class="ic">${icono("alerta")}</span><span class="cuerpo"><b>Alarma en pantalla</b>
-          <small>${App.alarmaOn() ? "Activada" : "Desactivada"}: los escalamientos y SLA vencidos suenan y vibran hasta que actuás · tocá para ${App.alarmaOn() ? "desactivarla" : "activarla"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
-        App.instalada() ? "" : `<li class="info clic" data-accion="instalar"><span class="ic">${icono("subir")}</span><span class="cuerpo"><b>Instalar la app</b>
-          <small>Queda un ícono en el celular, se abre a pantalla completa y (en iPhone) hace falta para los avisos con la pantalla apagada</small></span><span class="lado">${icono("flecha")}</span></li>`,
-        `<li class="info clic" data-accion="push-sw"><span class="ic">${icono("telefono")}</span><span class="cuerpo"><b>Avisos con la pantalla apagada</b>
-          <small>${App.pushActivo() ? "Activados en este dispositivo" : "Desactivados"}: escalamientos, convocatorias y mensajes de tus chats te llegan como notificación del celular aunque no tengas la página abierta · tocá para ${App.pushActivo() ? "desactivarlos" : "activarlos"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
-        App.pushActivo() ? `<li class="info clic" data-accion="push-probar"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Probar los avisos</b>
-          <small>Te manda una notificación de prueba a este dispositivo</small></span><span class="lado">${icono("flecha")}</span></li>` : "",
-        `<li class="info clic" data-accion="chat-sonido"><span class="ic">${icono("mensaje")}</span><span class="cuerpo"><b>Sonido de mensajes</b>
-          <small>${App.chatSonidoOn() ? "Activado" : "Desactivado"}: un "tin" suave y un aviso arriba cuando llega un mensaje a un chat · tocá para ${App.chatSonidoOn() ? "desactivarlo" : "activarlo"}</small></span><span class="lado">${icono("flecha")}</span></li>`,
-        `<li class="info clic" data-accion="alarma-probar"><span class="ic">${icono("campana")}</span><span class="cuerpo"><b>Probar la alarma</b>
-          <small>Mirá y escuchá cómo te va a avisar · subí el volumen del celular</small></span><span class="lado">${icono("flecha")}</span></li>`,
         `<li class="info clic" data-accion="telefono"><span class="ic">${icono("telefono")}</span><span class="cuerpo"><b>Mi teléfono para llamadas</b>
           <small>${esc(!yo ? "…" : yo.usuario.telefono || "Sin cargar: los escalamientos no te pueden llamar")} · tocá para cambiarlo</small></span><span class="lado">${icono("flecha")}</span></li>`,
         !yo ? "" : yo.usuario.origen_clave === "ldap"
           ? C.item({ estado:"info", icono:"candado", titulo:"Mi clave", detalle:"Usás la clave de la empresa (la misma de tu PC): se cambia ahí" })
           : `<li class="info clic" data-accion="clave"><span class="ic">${icono("candado")}</span><span class="cuerpo"><b>Mi clave</b>
           <small>Clave propia de Assurance Center · tocá para cambiarla</small></span><span class="lado">${icono("flecha")}</span></li>`,
-        App.rol === "ADMIN" ? "" : `<li class="info"><a class="enlace" href="notificaciones-perfil.html"><span class="ic">${icono("info")}</span><span class="cuerpo"><b>Qué te llega por tu perfil</b>
-          <small>${esc(yo ? yo.notificaciones_perfil.filter(t => t.canales.length).length + " de " + yo.notificaciones_perfil.length + " tipos de aviso" : "…")}</small></span><span class="lado">${icono("flecha")}</span></a></li>`,
         ...equipos.map(e => C.item({ estado: e.es_responsable ? "ok" : "info", icono:"red", titulo:e.nombre, detalle: e.es_responsable ? "Responsable del equipo" : "Integrante" }))
       ]) })}
+      ${C.tarjeta({ titulo:"Notificaciones", iconoTit:"campana", cuerpo: (() => {
+        const [est, txt, det] = estadoPush(), on = (b, si, no) => C.chip(b ? "ok" : "info", b ? si : no);
+        const fila = (accion, ic, tit, detalle, chip) => `<li class="info clic" data-accion="${accion}"><span class="ic">${icono(ic)}</span><span class="cuerpo"><b>${tit}</b>
+          <small>${detalle}</small></span>${chip || `<span class="lado">${icono("flecha")}</span>`}</li>`;
+        return `<div class="sub grupo-cfg">Con la pantalla apagada o en otra app</div><ul class="lista">
+          ${fila("push-sw", "telefono", "Avisos del celular", esc(det || "Escalamientos, convocatorias, menciones y mensajes de tus chats"), C.chip(est, txt))}
+          ${notif?.push ? fila("push-probar", "campana", "Probar los avisos", "Te manda una notificación de prueba a este dispositivo") : ""}
+          ${App.instalada() ? "" : fila("instalar", "subir", "Instalar la app", "Ícono en el celular y pantalla completa (en iPhone hace falta para los avisos)")}
+          ${fila("ayuda-sonido", "info", "Si el aviso no suena", "Cómo activar sonido y vibración en Android y iPhone")}</ul>
+          <div class="sub grupo-cfg">Con la página abierta</div><ul class="lista">
+          ${fila("alarma-sw", "alerta", "Alarma de escalamientos", "Escalamientos y SLA vencidos: suena y vibra hasta que actuás", on(App.alarmaOn(), "Activa", "Apagada"))}
+          ${fila("alarma-probar", "campana", "Probar la alarma", "Mirá y escuchá cómo te va a avisar · subí el volumen")}
+          ${fila("chat-sonido", "mensaje", "Mensajes de los chats", "Un «tin» suave y un aviso arriba, sin interrumpir", on(App.chatSonidoOn(), "Activo", "Apagado"))}</ul>
+          <div class="sub grupo-cfg">Cuándo y qué</div><ul class="lista">
+          ${fila("horario", "reloj", "Mi horario de avisos", esc((yo ? yo.usuario.disponibilidad_txt : "…") + " · tocá para cambiarlo"))}
+          ${App.rol === "ADMIN" ? "" : `<li class="info"><a class="enlace" href="notificaciones-perfil.html"><span class="ic">${icono("info")}</span><span class="cuerpo"><b>Qué te llega por tu perfil</b>
+          <small>${esc(yo ? yo.notificaciones_perfil.filter(t => t.canales.length).length + " de " + yo.notificaciones_perfil.length + " tipos de aviso" : "…")}</small></span><span class="lado">${icono("flecha")}</span></a></li>`}</ul>`;
+      })() })}
       ${grupos.length ? C.tarjeta({ titulo:"Configuración", iconoTit:"filtro", cuerpo: grupos.map(([t, xs]) =>
         `<div class="sub grupo-cfg">${esc(t)}</div><ul class="lista">${xs.join("")}</ul>`).join("") }) : ""}
       ${demo() ? `<details class="demo" id="modoDemo" ${demoAbierto ? "open" : ""}><summary>Modo demo · usuario demo, n8n, velocidad y datos</summary>
@@ -143,16 +195,41 @@ App.iniciar({
   },
   alMontar: () => {
     if (!yo) cargarYo();
+    if (!notif) cargarNotif();
     const d = document.getElementById("modoDemo"); if (d) d.ontoggle = () => { demoAbierto = d.open; };
   },
   accion: id => {
     if (id === "horario") { editarHorario(); return true; }
     if (id === "telefono") { editarTelefono(); return true; }
-    if (id === "alarma-sw") { App.alarmaConfigurar(!App.alarmaOn()); App.aviso(App.alarmaOn() ? "Alarma activada" : "Alarma desactivada", 2500); App.redibujar(); return true; }
+    if (id === "alarma-sw") {
+      (async () => {
+        if (App.alarmaOn() && !await confirmarDoble("la alarma de escalamientos", "Si llega un escalamiento o vence un SLA, no va a sonar ni vibrar con la página abierta. Solo vas a ver el aviso en la campana.")) return;
+        App.alarmaConfigurar(!App.alarmaOn()); App.aviso(App.alarmaOn() ? "Alarma activada" : "Alarma desactivada", 2500); App.redibujar();
+      })();
+      return true;
+    }
+    if (id === "ayuda-sonido") { ayudaSonido(); return true; }
     if (id === "instalar") { App.instalarApp(); return true; }
-    if (id === "push-sw") { (App.pushActivo() ? App.pushDesactivar() : App.pushActivar()).then(() => App.redibujar()); return true; }
+    if (id === "push-sw") {
+      (async () => {
+        if (notif?.push) {
+          if (!await confirmarDoble("los avisos del celular", "Con la pantalla apagada o la página cerrada no te va a llegar ningún escalamiento, convocatoria ni mensaje.")) return;
+          await App.pushDesactivar();
+        } else if (notif?.permiso === "denied") {
+          return App.aviso("El navegador los tiene bloqueados: Configuración del sitio → Notificaciones → Permitir, y volvé a tocar acá", 8000);
+        } else await App.pushActivar();
+        await cargarNotif();
+      })();
+      return true;
+    }
     if (id === "push-probar") { App.pushProbar(); return true; }
-    if (id === "chat-sonido") { App.chatSonidoConfigurar(!App.chatSonidoOn()); if (App.chatSonidoOn()) { App.sonarChat(); App.avisoChat({ titulo:"INC000000000 · Prueba", texto:"Así te va a avisar un mensaje nuevo", href:"chats.html" }); } App.redibujar(); return true; }
+    if (id === "chat-sonido") {
+      (async () => {
+        if (App.chatSonidoOn() && !await confirmarDoble("el aviso de mensajes de los chats", "Cuando te escriban en un chat no vas a escuchar el «tin» ni ver el aviso arriba; solo el número en el ícono de Chats.")) return;
+        App.chatSonidoConfigurar(!App.chatSonidoOn()); if (App.chatSonidoOn()) { App.sonarChat(); App.avisoChat({ titulo:"INC000000000 · Prueba", texto:"Así te va a avisar un mensaje nuevo", href:"chats.html" }); } App.redibujar();
+      })();
+      return true;
+    }
     if (id === "alarma-probar") { App.alarma({ id:"prueba", tipo:"escalamiento", titulo:"Prueba de alarma", cuerpo:"Así vas a ver y escuchar un escalamiento. Tocá Silenciar para cerrarla.", puede_tomar:false }, { prueba:true }); return true; }
     if (id === "clave") { cambiarClave(); return true; }
     if (id === "n8n-guardar" || id === "n8n-probar") {
