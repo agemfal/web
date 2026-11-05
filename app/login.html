@@ -62,12 +62,13 @@ async function pedir(metodo, ruta, body, token){
 }
 
 function guardarSesion(d){
-  ["tokenRBAC", "usuarioDemo", "nombreLogin", "loginDemo", "permisos", "equipos"].forEach(k => ss.removeItem(k));
+  ["tokenRBAC", "usuarioDemo", "nombreLogin", "loginDemo", "permisos", "equipos", "avisoSesion", "expira"].forEach(k => ss.removeItem(k));
   ss.setItem("token", d.token);
   ss.setItem("usuario", d.usuario.username);
   ss.setItem("nombre", d.usuario.nombre);
   ss.setItem("rol", d.usuario.rol);
   ss.setItem("origenClave", d.origen_clave);
+  if (d.expira_en) ss.setItem("expira", d.expira_en);        // para avisar 10 minutos antes de que venza
   if (local) { ss.setItem("tokenRBAC", d.token); ss.setItem("loginDemo", d.token); }   // la demo usa la sesión recién creada
 }
 

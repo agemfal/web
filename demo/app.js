@@ -437,6 +437,8 @@ const App = {
     // Service worker: para recibir notificaciones push con la página cerrada (solo con la API real)
     // (también en la demo: Chrome lo usa para ofrecer "Instalar app")
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    // Sesión de 3 horas: aviso en pantalla 10 minutos antes de que venza (en el celular llega además como notificación)
+    this.programarAvisoSesion();
     // Si este dispositivo ya dio permiso, se vuelve a registrar en el servidor (por si quedó a medias o cambió)
     if (CONFIG.MODO_DATOS !== "local" && hayModuloRBAC()) setTimeout(() => this.pushResincronizar(), 3000);
     window.addEventListener("beforeinstallprompt", ev => { ev.preventDefault(); App._instalar = ev; App.pagina?.alInstalable?.(); });
@@ -641,6 +643,18 @@ const App = {
     if (this._instalar) { this._instalar.prompt(); await this._instalar.userChoice.catch(() => null); this._instalar = null; return; }
     if (/iPhone|iPad|iPod/.test(navigator.userAgent)) return this.aviso("En iPhone: tocá Compartir (el cuadrado con la flecha) → «Agregar a inicio»", 8000);
     this.aviso("Abrí el menú de Chrome (⋮) → «Instalar app» o «Agregar a la pantalla principal»", 8000);
+  },
+  programarAvisoSesion(){
+    const fin = Date.parse(sessionStorage.getItem("expira") || "");
+    if (!fin) return;
+    const aviso = () => {
+      const min = Math.max(1, Math.ceil((fin - Date.now()) / 60000));
+      this.aviso(`Tu sesión vence en ${min} minuto${min === 1 ? "" : "s"}. Después vas a tener que volver a ingresar con un código`, 15000);
+    };
+    const falta = fin - 10 * 60000 - Date.now();
+    if (fin - Date.now() <= 0) return;
+    if (falta <= 0) { if (!sessionStorage.getItem("avisoSesion")) { sessionStorage.setItem("avisoSesion", "1"); aviso(); } return; }
+    setTimeout(() => { if (!sessionStorage.getItem("avisoSesion")) { sessionStorage.setItem("avisoSesion", "1"); aviso(); } }, Math.min(falta, 2 ** 31 - 1));
   },
   pushSoportado(){ return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; },
   esIOSsinInstalar(){
