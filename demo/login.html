@@ -97,7 +97,7 @@ function dibujar(error = ""){
         <p class="error" id="fError" role="alert">${esc(error)}</p>
         <button class="boton primario" type="submit" ${ocupado ? "disabled" : ""}>${ocupado ? "Ingresando…" : "Ingresar"}</button>
       </form>
-      <p class="nota">¿No llegó? Puede tardar hasta un minuto.
+      <p class="nota">¿No llegó? Puede tardar hasta un minuto (revisá también Correo no deseado). Si pedís otro, el primero que llegue también sirve.
         <span id="fOtroZona"></span> <a href="#" id="fOtro">Usar otro usuario</a></p>`;
     const c = document.getElementById("fCod");
     c.oninput = () => { c.value = c.value.replace(/\D/g, "").slice(0, 6); if (c.value.length === 6 && !ocupado) ingresarCodigo(); };
