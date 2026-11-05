@@ -30,13 +30,14 @@ async function cargarNotif(){
   const n = { modo:CONFIG.MODO_DATOS, permiso: "Notification" in window ? Notification.permission : "no_soportado",
               soportado: App.pushSoportado(), suscripto:false, servidor:null, configurado:true, instalada:App.instalada(), ios:App.esIOSsinInstalar() };
   if (n.modo !== "local" && n.soportado) {
-    try { n.suscripto = !!(await App.pushSuscripcion()); } catch {}
-    const r = await App.api("GET", "/push/estado");
-    if (r.cuerpo?.ok) n.servidor = r.cuerpo.data.dispositivos;
+    let sub = null;
+    try { sub = await App.pushSuscripcion(); n.suscripto = !!sub; } catch {}
+    const r = await App.api("GET", "/push/estado" + (sub ? "?endpoint=" + encodeURIComponent(sub.endpoint) : ""));
+    if (r.cuerpo?.ok) { n.servidor = r.cuerpo.data.dispositivos; n.este = r.cuerpo.data.este; }
     else if (r.cuerpo?.error?.codigo === "PUSH_DESHABILITADO") n.configurado = false;
   }
-  // Activos de verdad = permiso dado + suscripción en este navegador + el servidor la tiene
-  n.push = n.permiso === "granted" && n.suscripto && n.servidor > 0;
+  // Activos de verdad = permiso dado + suscripción en ESTE navegador + el servidor tiene ESA suscripción
+  n.push = n.permiso === "granted" && n.suscripto && n.este === true;
   try { localStorage.setItem("pushActivo", n.push ? "1" : "0"); } catch {}
   notif = n; App.redibujar();
 }

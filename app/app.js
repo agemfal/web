@@ -437,6 +437,8 @@ const App = {
     // Service worker: para recibir notificaciones push con la página cerrada (solo con la API real)
     // (también en la demo: Chrome lo usa para ofrecer "Instalar app")
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    // Si este dispositivo ya dio permiso, se vuelve a registrar en el servidor (por si quedó a medias o cambió)
+    if (CONFIG.MODO_DATOS !== "local" && hayModuloRBAC()) setTimeout(() => this.pushResincronizar(), 3000);
     window.addEventListener("beforeinstallprompt", ev => { ev.preventDefault(); App._instalar = ev; App.pagina?.alInstalable?.(); });
     window.addEventListener("appinstalled", () => { App._instalar = null; App.aviso("App instalada: abrila desde el ícono de Assurance Center", 5000); });
     // RBAC: rol, nombre y permisos los decide el backend (GET /me)
@@ -650,7 +652,7 @@ const App = {
     const reg = await navigator.serviceWorker.getRegistration();
     return reg ? reg.pushManager.getSubscription() : null;
   },
-  async pushActivar(){
+  async pushActivar(silencioso = false){
     if (CONFIG.MODO_DATOS === "local") return this.aviso("En la demo no hay servidor: las notificaciones push funcionan en la página real", 4500);
     if (this.esIOSsinInstalar()) return this.aviso("En iPhone primero instalá la página: Compartir → «Agregar a inicio». Después activalo desde ahí", 8000);
     if (!this.pushSoportado()) return this.aviso("Este navegador no admite notificaciones push", 4000);
@@ -666,9 +668,17 @@ const App = {
       const r = await this.api("POST", "/push/suscribir", sub.toJSON());
       if (!r.cuerpo?.ok) return this.aviso(r.cuerpo?.error?.mensaje || "No se pudo activar", 4500);
       try { localStorage.setItem("pushActivo", "1"); } catch {}
-      this.aviso("Listo: te vamos a avisar aunque tengas la pantalla apagada", 4000);
+      if (!silencioso) this.aviso("Listo: te vamos a avisar aunque tengas la pantalla apagada", 4000);
       return true;
     } catch (e) { this.aviso("No se pudo activar: " + (e.message || e), 5000); }
+  },
+  async pushResincronizar(){
+    try {
+      if (!this.pushSoportado() || Notification.permission !== "granted" || !sessionStorage.getItem("token")) return;
+      const sub = await this.pushSuscripcion();
+      if (sub) await this.api("POST", "/push/suscribir", sub.toJSON());
+      else if (this.pushActivo()) await this.pushActivar(true);     // tenía avisos y se perdió la suscripción: se rehace sin preguntar
+    } catch {}
   },
   async pushDesactivar(){
     try {
