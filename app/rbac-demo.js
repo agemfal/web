@@ -1687,7 +1687,7 @@ const ReglasRBAC = (() => {
   };
 
   // Equipos míos que todavía no están en el INC y que puedo sumarle (permiso agregar_equipo en ese equipo)
-  const equiposParaSumar = (raw, auth, i) => !auth || !i ? [] : auth.equipos
+  const equiposParaSumar = (raw, auth, i) => !auth || !i || jefeOMas(raw, auth) ? [] : auth.equipos
     .filter(x => !arr(i.equipos).includes(x.id) && equipo(raw, x.id)?.estado === "activo" && arr(x.permisos).includes("agregar_equipo"))
     .map(x => ({ id:x.id, nombre:equipo(raw, x.id)?.nombre || x.nombre || null }));
 
@@ -1735,10 +1735,8 @@ const ReglasRBAC = (() => {
     if (i.equipos.includes(teamId)) return k.fallo(409, "EQUIPO_YA_EN_INC", `${t.nombre} ya está en el incidente`);
     if (!auth.equipos.some(x => x.id === teamId)) return k.fallo(403, "NO_ES_DE_TU_EQUIPO", "Solo podés sumar un equipo al que pertenecés");
     const p = k.permiso("agregar_equipo", { team_id:teamId }); if (p) return p;
-    // Un Operador que suma su equipo lo trabaja él; un Jefe o Administrador lo suma pendiente (lo toma un Operador)
-    const jefe = jefeOMas(raw, auth), asignado_id = jefe ? null : auth.id;
-    k.plan.inc_equipo_upd.push({ inc:i.inc, team_id:teamId, incident_id:null, estado_equipo: jefe ? "pendiente" : "reconocido", asignado_id,
-      reconocido_por: jefe ? null : auth.id, reconocido_en: jefe ? null : k.ahora });
+    const asignado_id = auth.id;     // solo Operadores (los Jefes y Administradores no se suman: SOLO_OPERADORES)
+    k.plan.inc_equipo_upd.push({ inc:i.inc, team_id:teamId, incident_id:null, estado_equipo:"reconocido", asignado_id, reconocido_por:auth.id, reconocido_en:k.ahora });
     k.aud("INC_EQUIPO_SUMADO", "incidente", i.inc, teamId, { antes:{ equipos:i.equipos.length }, despues:{ equipos:i.equipos.length + 1, asignado_id } });
     planSumarAlChat(k, raw, auth, i.inc, `🧩 ${auth.nombre} sumó a ${t.nombre} al incidente`);
     k.notificar(unicos([...i.equipos.map(id => responsable(raw, id)?.user_id), responsable(raw, teamId)?.user_id]).filter(id => id && id !== auth.id),
@@ -1758,7 +1756,7 @@ const ReglasRBAC = (() => {
     const i = incidenteDe(raw, inc);
     if (!i) return k.fallo(404, "INC_INEXISTENTE", "El incidente no existe o ya no está abierto");
     if (accion === "cerrar") return cerrarInc(k, auth, raw, i);
-    if ((accion === "tomar" || accion === "unirse") && jefeOMas(raw, auth))
+    if (["tomar", "unirse", "sumar_equipo"].includes(accion) && jefeOMas(raw, auth))
       return k.fallo(403, "SOLO_OPERADORES", "Los Jefes y Administradores no toman incidentes: lo toma un Operador del equipo");
     if (accion === "sumar_equipo") return sumarEquipoInc(k, auth, raw, i, teamId);
     if (!i.equipos.includes(teamId)) return k.fallo(422, "EQUIPO_INVALIDO", "Ese equipo no está en el incidente");
