@@ -10,7 +10,8 @@ const CONFIG = {
   MODO_DATOS:   "local",       // "local" = PRUEBAS (datos de demo en el navegador) | "api" = PRODUCCIÓN
   URL_API:      "/api",        // solo modo "api"
   URL_LOGIN:    "login.html",
-  REFRESCO_SEG: 10,            // auto-actualización (0 = desactivada)
+  // auto-actualización (0 = desactivada): arranca con la última que mandó el servidor y se ajusta al leer GET /me
+  REFRESCO_SEG: (() => { try { return Number(sessionStorage.getItem("refrescoSeg")) || 10; } catch { return 10; } })(),
   // Demo → n8n: si tiene una URL (o se carga en Perfil), los cambios de categoría de un INC también se mandan
   // a ese webhook de n8n para que actualice el INC en la base. En modo "api" no hace falta: todo pasa por n8n.
   N8N_WEBHOOK_INC: "",
@@ -456,9 +457,15 @@ const App = {
       this.reanudarAlarma();
       setInterval(() => { if (!document.hidden) this.revisarNotificaciones(); }, 8000);
     }
-    if (CONFIG.REFRESCO_SEG > 0) {
-      setInterval(() => { if (!document.hidden) this.cargar(true); }, CONFIG.REFRESCO_SEG * 1000);
-    }
+    this.programarRefresco(CONFIG.REFRESCO_SEG);
+  },
+  // Auto-actualización: el intervalo lo define el Administrador (GET /me → config.refresco_seg); se recuerda entre pantallas
+  programarRefresco(seg){
+    seg = Number(seg) || 0;
+    if (seg === this._refrescoSeg) return;
+    clearInterval(this._refresco); this._refrescoSeg = seg; CONFIG.REFRESCO_SEG = seg;
+    const pr = $("#progreso"); if (pr) pr.style.setProperty("--seg", seg + "s");
+    if (seg > 0) this._refresco = setInterval(() => { if (!document.hidden) this.cargar(true); }, seg * 1000);
   },
 
   armarEstructura(){
@@ -835,6 +842,7 @@ const App = {
     sessionStorage.setItem("permisos", JSON.stringify(d.permisos));
     sessionStorage.setItem("equipos", JSON.stringify(d.equipos));
     if (d.config?.clasificacion) sessionStorage.setItem("clasificacion", JSON.stringify(d.config.clasificacion));
+    if (d.config?.refresco_seg) { sessionStorage.setItem("refrescoSeg", String(d.config.refresco_seg)); this.programarRefresco(d.config.refresco_seg); }
     this.rol = d.usuario.rol; this.usuario = d.usuario.nombre; this.permisos = d.permisos; this.me = d;
     document.body.setAttribute("data-rol", this.rol);
     return d;

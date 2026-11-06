@@ -15,13 +15,26 @@
 <body>
 <main id="app"></main>
 <!-- Demo Local: backend simulado del módulo de usuarios y equipos -->
-<script src="rbac-demo.js?v=b24eda2425"></script>
-<script src="app.js?v=61c4b3ef9e"></script>
+<script src="rbac-demo.js?v=d78e0f89fb"></script>
+<script src="app.js?v=247169b328"></script>
 <script>
 /* PERFIL — cuenta, rol, equipos, administración y configuración */
 const enlace = (href, ic, titulo, detalle) => `<li class="info"><a class="enlace" href="${href}">
   <span class="ic">${icono(ic)}</span><span class="cuerpo"><b>${esc(titulo)}</b><small>${esc(detalle)}</small></span>
   <span class="lado">${icono("flecha")}</span></a></li>`;
+// Administrador: cada cuántos segundos se actualizan las pantallas de todos (la barra de "Actualizado")
+async function editarRefresco(){
+  const actual = App.me?.config?.refresco_seg || CONFIG.REFRESCO_SEG;
+  const f = await App.formulario({ titulo:"Actualización de pantallas", enviar:"Guardar", campos:[
+    { tipo:"nota", texto:"Cada cuánto se actualizan solas las pantallas de todos los usuarios. Menos segundos = todo más al día, pero más consultas al servidor. Recomendado: 10 segundos." },
+    { id:"segundos", etiqueta:"Actualizar cada", tipo:"select", valor:String(actual),
+      opciones:[5, 10, 15, 30, 60, 120, 300].map(x => ({ valor:String(x), texto: x < 60 ? `${x} segundos` : `${x / 60} minuto${x > 60 ? "s" : ""}` })) },
+    { id:"justificacion", etiqueta:"Justificación (queda en la auditoría)", tipo:"textarea", requerido:true, min:10, ayuda:"Ej.: Menos carga en el servidor en horario nocturno" } ] });
+  if (!f) return;
+  const r = await App.enviar("PUT", "/config/actualizacion", { segundos:Number(f.segundos), justificacion:f.justificacion }, "Listo: las pantallas se actualizan con el nuevo tiempo");
+  if (!r) return;
+  await App.sincronizarSesion(); App.redibujar();
+}
 const demo = () => CONFIG.MODO_DATOS === "local" && typeof SimuladorRBAC !== "undefined";
 let yo = null, demoAbierto = false;   // GET /me (incluye mi horario de avisos)
 /* ===== Notificaciones: estado REAL (navegador + servidor), no lo que quedó anotado ===== */
@@ -192,6 +205,8 @@ App.iniciar({
       ["Operación", [
         App.rol === "ADMIN" ? enlace("catalogo-servicios.html", "server", "Servicios", "Servicios de cada red (Fija, Móvil…): agregar, editar o sacar") : "",
         App.rol === "ADMIN" ? enlace("clasificacion-inc.html", "filtro", "Clasificación y SLA", "Prioridades, incidente mayor, categorías y SLA") : "",
+        App.rol === "ADMIN" ? `<li class="info alto clic" data-accion="refresco"><span class="ic">${icono("reloj")}</span><span class="cuerpo"><b>Actualización de pantallas</b>
+          <small>Cada ${App.me?.config?.refresco_seg || CONFIG.REFRESCO_SEG} segundos, para todos los usuarios</small></span><span class="lado">${icono("flecha")}</span></li>` : "",
         App.puede("editar_matriz") ? enlace("matrices.html", "subir", "Matrices de escalamiento", "Orden de aviso por equipo, o el mismo para varios o todos") : "" ]],
       ["Avisos", [ App.rol === "ADMIN" ? enlace("notificaciones-perfil.html", "campana", "Notificaciones por perfil", "Qué avisos recibe cada rol y por qué canales") : "" ]],
       ["Control", [ App.puede("ver_auditoria") ? enlace("auditoria.html", "check", "Auditoría", "Quién hizo qué, cuándo y en qué equipo") : "" ]]
@@ -261,6 +276,7 @@ App.iniciar({
   },
   accion: id => {
     if (id === "horario") { editarHorario(); return true; }
+    if (id === "refresco") { editarRefresco(); return true; }
     if (id === "telefono") { editarTelefono(); return true; }
     if (id === "paso-agregar") { agregarPaso(); return true; }
     if (id.startsWith("paso-quitar:")) { quitarPaso(Number(id.slice(12))); return true; }

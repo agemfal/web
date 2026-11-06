@@ -1097,8 +1097,26 @@ const ReglasRBAC = (() => {
       permisos: permisosEfectivos(auth),
       notificaciones_perfil: TIPOS_NOTIF.map(([id, nombre]) => ({ id, nombre, canales:canalesPermitidos(raw, auth.rol, id) })),
       config:{ prioridad_critica:Math.max(0, ...clasificacion(raw).categorias.filter(c => sevDe(raw, c.p) === "crit").map(c => c.p)),
-               sla_riesgo_pct:raw.config.sla_riesgo_pct, clasificacion:clasificacion(raw) }
+               sla_riesgo_pct:raw.config.sla_riesgo_pct, clasificacion:clasificacion(raw), refresco_seg:refrescoSeg(raw) }
     });
+  }
+
+  // Cada cuántos segundos se actualizan las pantallas (la barra de "Actualizado"). Lo define el Administrador.
+  const REFRESCO_OPCIONES = [5, 10, 15, 30, 60, 120, 300];
+  const refrescoSeg = raw => { const v = Number(raw.config?.refresco_seg); return REFRESCO_OPCIONES.includes(v) ? v : 10; };
+  // PUT /config/actualizacion { segundos, justificacion } — solo Administrador
+  function editarActualizacion(e, auth, raw){
+    const k = contexto(e, auth, raw, "config"), b = e.body;
+    const no = sinSesion(k); if (no) return no;
+    if (!auth.es_admin) return k.fallo(403, "SOLO_ADMIN", "Solo el Administrador puede cambiar cada cuánto se actualizan las pantallas");
+    const seg = Number(b.segundos);
+    if (!REFRESCO_OPCIONES.includes(seg)) return k.fallo(422, "VALOR_INVALIDO", `Elegí uno de estos valores (segundos): ${REFRESCO_OPCIONES.join(", ")}`);
+    const antes = refrescoSeg(raw);
+    if (seg === antes) return k.exito(200, { tipo:"config" }, { sin_cambios:true, segundos:seg });
+    if (k.just.length < 10) return k.fallo(422, "JUSTIFICACION_REQUERIDA", "Indicá una justificación (mínimo 10 caracteres)");
+    k.plan.config_upd.push({ clave:"refresco_seg", valor:seg });
+    k.aud("CONFIG_ACTUALIZACION_MODIFICADA", "config", "refresco_seg", null, { antes:{ segundos:antes }, despues:{ segundos:seg } });
+    return k.exito(200, { tipo:"config" }, { segundos:seg });
   }
 
   const visible = (auth, u) => auth.es_admin || u.id === auth.id ||
@@ -2538,7 +2556,7 @@ const ReglasRBAC = (() => {
   const OPERACIONES = {
     solicitarAlta, resolverSolicitud, crearUsuario, modificarUsuario, resetearClave, cambiarRol, cambiarEstadoUsuario,
     agregarIntegrantes, removerIntegrante, reemplazarEquiposUsuario, cambiarResponsable,
-    crearEquipo, modificarEquipo, modificarCatalogo, cambiarEstadoEquipo, editarMatriz, editarMatrizMasiva, accionIncidente, editarDisponibilidad, editarTelefono, editarPasos, verPoliticaNotif, editarPoliticaNotif, verClasificacion, editarClasificacion, cambiarCategoriaInc, verServicios, guardarServicio,
+    crearEquipo, modificarEquipo, modificarCatalogo, cambiarEstadoEquipo, editarMatriz, editarMatrizMasiva, accionIncidente, editarDisponibilidad, editarTelefono, editarPasos, verPoliticaNotif, editarPoliticaNotif, verClasificacion, editarClasificacion, editarActualizacion, cambiarCategoriaInc, verServicios, guardarServicio,
     me, listarUsuarios, verUsuario, equiposDeUsuario, listarSolicitudes, listarEquipos, verEquipo, integrantesDeEquipo,
     listarRoles, verRol, consultarAuditoria,
     listarDebates, abrirDebate, verDebate, unirseDebate, salirDebate, enviarMensaje, eliminarMensaje, cerrarDebate, verAdjunto,
@@ -2569,6 +2587,7 @@ const ReglasRBAC = (() => {
     else if (f.tipo === "integrantes") data = { agregados:f.agregados.map(id => vistaIntegrante(raw, id)), removidos:f.removidos.map(id => vistaIntegrante(raw, id)), sin_cambios:f.sin_cambios, advertencias:x.advertencias || [] };
     else if (f.tipo === "incidente") { const i = incidenteDe(raw, f.inc); data = { incidente: i ? { inc:i.inc, titulo:i.titulo, prioridad:i.prioridad,
       categoria:vistaCategoria(raw, i.prioridad), sla:slaDe(raw, i), equipos:equiposInc(raw, auth, i) } : null, ...x }; }
+    else if (f.tipo === "config") data = { segundos:refrescoSeg(raw), ...x };
     else if (f.tipo === "clasificacion") data = { ...JSON.parse(JSON.stringify(clasificacion(raw))), ...x };
     else if (f.tipo === "servicio") { const sv = arr(raw.servicios).find(y => y.id === f.id); data = { servicio:sv ? vistaServicio(raw, sv) : null, ...x }; }
     else if (f.tipo === "politica") { const roles = raw.roles.slice().sort((a, b) => a.nivel - b.nivel);
@@ -2658,6 +2677,7 @@ const ReglasRBAC = (() => {
     { wf:"WF48a", nombre:"Notificaciones por perfil (ver)",    metodo:"GET",   ruta:"notificaciones/politica",            operacion:"verPoliticaNotif",         tipo:"lectura" },
     { wf:"WF48b", nombre:"Notificaciones por perfil (editar)", metodo:"PUT",   ruta:"notificaciones/politica",            operacion:"editarPoliticaNotif",      tipo:"escritura" },
     { wf:"WF49a", nombre:"Clasificación de INC (ver)",         metodo:"GET",   ruta:"clasificacion",                      operacion:"verClasificacion",         tipo:"lectura" },
+    { wf:"WF49c", nombre:"Actualización de pantallas (editar)", metodo:"PUT",  ruta:"config/actualizacion",               operacion:"editarActualizacion",      tipo:"escritura" },
     { wf:"WF49b", nombre:"Clasificación de INC (editar)",      metodo:"PUT",   ruta:"clasificacion",                      operacion:"editarClasificacion",      tipo:"escritura" },
     { wf:"WF50a", nombre:"Servicios (ver)",                    metodo:"GET",   ruta:"servicios",                          operacion:"verServicios",             tipo:"lectura" },
     { wf:"WF50b", nombre:"Servicios (alta y modificación)",    metodo:"POST",  ruta:"servicios",                          operacion:"guardarServicio",          tipo:"escritura" },
