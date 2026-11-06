@@ -241,6 +241,10 @@ const C = {
      unirme a quien ya lo trabaja (varias personas), o sumar mi equipo si no figura. Devuelve [{ accion, id (equipo), nombre, estado, aviso }]. */
   sumarse: i => {
     const eqs = i.equipos || [], tiene = (e, a) => (e.acciones || []).some(x => x.accion === a), out = [];
+    // Jefes: un solo botón "Enterado" para todos sus equipos pendientes del INC (detiene el escalamiento, no asigna)
+    const ent = i.enterado || [];
+    if (ent.length) out.push({ accion:"enterado", id:"enterado", nombre:ent.map(t => t.nombre).join(", "), etiqueta:"Enterado",
+      estado:`Nadie lo atendió todavía · ${ent.map(t => t.nombre).join(", ")}`, aviso:"Tocá Enterado: se detiene el escalamiento de tus equipos. No te asigna el INC." });
     eqs.filter(e => e.estado === "pendiente" && tiene(e, "tomar")).forEach(e => out.push({ accion:"tomar", id:e.id, nombre:e.nombre,
       estado:`${e.nombre}: nadie lo tomó todavía`, aviso:"Unite al INC para trabajarlo: queda a tu nombre y se detiene el escalamiento." }));
     eqs.filter(e => tiene(e, "unirse")).forEach(e => out.push({ accion:"unirse", id:e.id, nombre:e.nombre,
@@ -270,8 +274,8 @@ const C = {
       ${d?.ultimo ? `<div class="tinc-ult">${esc(d.ultimo.autor || "")}: ${esc(d.ultimo.texto)}</div>` : ""}
       <div class="btns">
         ${opciones.map(mio => App.pendientes.has(`${i.inc}:${mio.id}`)
-          ? `<button class="boton chico" data-accion="deshacer:${inc}:${esc(mio.id)}">${icono("mano")}Sumándote · Deshacer</button>`
-          : `<button class="boton chico primario" data-accion="inc:${mio.accion}:${inc}:${esc(mio.id)}">${icono("mano")}${mio.accion === "tomar" ? "Tomar" : mio.accion === "unirse" ? "Unirme" : "Sumar"} · ${esc(mio.nombre)}</button>`).join("")}
+          ? `<button class="boton chico" data-accion="deshacer:${inc}:${esc(mio.id)}">${mio.etiqueta ? "Enterado" : `${icono("mano")}Sumándote`} · Deshacer</button>`
+          : `<button class="boton chico primario" data-accion="inc:${mio.accion}:${inc}:${esc(mio.id)}">${mio.etiqueta ? `${icono("check")}${esc(mio.etiqueta)}` : `${icono("mano")}${mio.accion === "tomar" ? "Tomar" : mio.accion === "unirse" ? "Unirme" : "Sumar"} · ${esc(mio.nombre)}`}</button>`).join("")}
         ${abrir}
         ${i.puede_cambiar_categoria ? `<button class="boton chico" data-accion="cat:${inc}:${i.prioridad}">${icono("cambiar")}Cambiar categoría</button>` : ""}
         ${i.puede_cerrar ? `<button class="boton chico peligro" data-accion="cerrarinc:${inc}">${icono("check")}Cerrar INC</button>` : ""}
@@ -892,13 +896,13 @@ const App = {
 
   accionInc(id){
     const [, accion, inc, equipo] = id.split(":");
-    const T = { tomar:["Vas a tomar", "Tomaste"], unirse:["Vas a unirte a", "Te uniste a"], sumar_equipo:["Vas a sumar tu equipo a", "Sumaste tu equipo a"] }[accion] || ["Vas a tomar", "Tomaste"];
+    const T = { tomar:["Vas a tomar", "Tomaste"], unirse:["Vas a unirte a", "Te uniste a"], sumar_equipo:["Vas a sumar tu equipo a", "Sumaste tu equipo a"], enterado:["Vas a dar Enterado en", "Diste Enterado en"] }[accion] || ["Vas a tomar", "Tomaste"];
     this.diferir(`${inc}:${equipo}`, `${T[0]} ${inc}. Se confirma en 5 segundos.`, async salida => {
       const r = await this.api("POST", `/incidentes/${encodeURIComponent(inc)}/acciones`, { accion, equipo_id:equipo }, { keepalive:salida });
       if (salida) return;
       if (!r.cuerpo.ok) { this.aviso(r.cuerpo.error.mensaje, 4000); return this.redibujar(); }
       const eq = r.cuerpo.data.incidente?.equipos.find(x => x.id === equipo);
-      this.aviso(`${T[1]} ${inc}${eq ? " por " + eq.nombre : ""}${accion === "tomar" ? ": se detiene el escalamiento" : ""}`, 3000);
+      this.aviso(`${T[1]} ${inc}${eq ? " por " + eq.nombre : ""}${accion === "tomar" || accion === "enterado" ? ": se detiene el escalamiento" : ""}`, 3000);
       this.pagina?.alCambiarInc?.(r.cuerpo.data);
     });
   },

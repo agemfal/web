@@ -14,7 +14,7 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=37"></script>
+<script src="rbac-demo.js?v=38"></script>
 <script src="app.js"></script>
 <script>
 /* DEBATE — chat del incidente: mensajes, fotos, archivos, notas y fijados, con la info del INC a mano.
@@ -116,9 +116,9 @@ function bannerUnirse(d){
   if (!i.abierto) return "";
   return C.sumarse(i).map(o => {
     const pendiente = App.pendientes.has(`${i.inc}:${o.id}`);
-    return `<div class="unirse-inc"><span class="txt"><b>${esc(o.estado)}</b><small>${pendiente ? "Te estás sumando: se confirma en 5 segundos." : esc(o.aviso)}</small></span>
+    return `<div class="unirse-inc"><span class="txt"><b>${esc(o.estado)}</b><small>${pendiente ? (o.etiqueta ? "Se confirma en 5 segundos." : "Te estás sumando: se confirma en 5 segundos.") : esc(o.aviso)}</small></span>
     ${pendiente ? `<button class="boton" data-accion="deshacer:${esc(i.inc)}:${esc(o.id)}">Deshacer</button>`
-      : `<button class="boton primario" data-accion="inc:${o.accion}:${esc(i.inc)}:${esc(o.id)}">${icono("mano")}Unirme al INC · ${esc(o.nombre)}</button>`}</div>`;
+      : `<button class="boton primario" data-accion="inc:${o.accion}:${esc(i.inc)}:${esc(o.id)}">${o.etiqueta ? icono("check") + esc(o.etiqueta) : `${icono("mano")}Unirme al INC · ${esc(o.nombre)}`}</button>`}</div>`;
   }).join("");
 }
 
