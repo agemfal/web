@@ -1418,7 +1418,8 @@ const ReglasRBAC = (() => {
   const puedeCambiarCat = (raw, auth, i) => !!auth && arr(i.equipos).some(t => puede(auth, "editar_inc", { team_id:t }, raw));
   // Jefes/Gestores y Administradores conducen: no toman INC (lo toma un Operador), pero son los que lo cierran
   const jefeOMas = (raw, auth) => !!auth && (auth.es_admin || !!rolDef(raw, auth.rol)?.puede_ser_responsable);
-  const puedeCerrarInc = (raw, auth, i) => !!auth && (auth.es_admin
+  // Los INC reales (origen n8n) se cierran en la herramienta: su estado lo manda la sincronización (SQL 034)
+  const puedeCerrarInc = (raw, auth, i) => !!auth && i.origen !== "n8n" && (auth.es_admin
     || (jefeOMas(raw, auth) && arr(i.equipos).some(t => puede(auth, "cerrar_inc", { team_id:t }, raw))));
 
   // POST /incidentes/:inc/categoria { prioridad_tipo, grave, motivo } — WF49c: la categoría de un INC puede cambiar
@@ -1804,6 +1805,7 @@ const ReglasRBAC = (() => {
   function cerrarInc(k, auth, raw, i){
     const inc = i.inc;
     k.team_id = i.equipos[0] || null;
+    if (i.origen === "n8n") return k.fallo(409, "INC_DE_LA_HERRAMIENTA", "Este INC viene de la herramienta: se cierra allá y el NOC copia su estado");
     if (!puedeCerrarInc(raw, auth, i)) return k.fallo(403, "SOLO_JEFES", "Solo los Jefes de los equipos del INC y los Administradores pueden cerrarlo");
     const motivo = txt(k.e.body.motivo || k.e.body.justificacion).slice(0, 300);
     if (motivo.length < 5) return k.fallo(422, "MOTIVO_REQUERIDO", "Contá por qué se cierra el INC (mínimo 5 caracteres)");
