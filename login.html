@@ -34,8 +34,8 @@
 </head>
 <body>
 <main class="login"><section class="card" id="caja" aria-live="polite"></section></main>
-<script src="rbac-demo.js?v=3368b5abc8"></script>
-<script src="app.js?v=bbff451a88"></script>
+<script src="rbac-demo.js?v=482004d5a3"></script>
+<script src="app.js?v=906ff917a2"></script>
 <script>
 /* INGRESO
    · Con código (lo normal): usuario → POST /auth/codigo → llega un código de 6 dígitos al correo de la empresa
@@ -234,7 +234,7 @@ async function salir(){
     const m = await pedir("POST", "/auth/motivo", { token:viejo });
     const motivo = m.cuerpo?.data?.motivo;
     if (motivo === "otro_dispositivo") return dibujar("Tu sesión se cerró porque entraste con tu usuario desde otro dispositivo o navegador.");
-    if (motivo === "vencida") return dibujar("Tu sesión venció: por seguridad dura 3 horas. Volvé a ingresar.");
+    if (motivo === "vencida") return dibujar("Tu sesión venció: por seguridad dura 8 horas. Volvé a ingresar.");
   }
   if (estado === "ingreso" && ss.getItem("token") && ss.getItem("origenClave")) {
     const r = local ? SimuladorRBAC.atender({ metodo:"GET", ruta:"/api/me", token:ss.getItem("token") })

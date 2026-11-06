@@ -1936,7 +1936,7 @@ const ReglasRBAC = (() => {
   // local: clave propia (cuentas de emergencia) · ldap: clave de la empresa · codigo: sin clave, entra con un código por correo (SQL 019)
   const origenClave = u => u.origen_clave === "ldap" ? "ldap" : u.origen_clave === "codigo" ? "codigo" : "local";
   const configLogin = raw => ({ intentos:Number(raw.config?.login_bloqueo?.intentos || 5), minutos:Number(raw.config?.login_bloqueo?.minutos || 15),
-    horas:Number(raw.config?.sesion_horas || 3) });
+    horas:Number(raw.config?.sesion_horas || 8) });
 
   // Qué verificador usar para un usuario (n8n lo consulta antes de verificar; sin usuario → "local", sin filtrar si existe)
   function verificadorDe(raw, usuarioOEmail){
@@ -2848,7 +2848,7 @@ const DATOS_DEMO_RBAC = (() => {
     config: {
       prioridad_critica:3, umbrales_disponibilidad:{ ok:99.5, warn:97 }, orden_redes:["Red Fija", "Red Móvil", "Empresas"],
       equipo_por_red:{ "Red Fija":"VOC", "Red Móvil":"SOC" },
-      sla_minutos:{ 1:60, 2:120, 3:240, 4:480, 5:720, 6:1440 }, sla_riesgo_pct:0.8, sesion_horas:3,
+      sla_minutos:{ 1:60, 2:120, 3:240, 4:480, 5:720, 6:1440 }, sla_riesgo_pct:0.8, sesion_horas:8,
       motor_url:"http://localhost:5678/webhook/interno/escalamiento", version_api:"1.1",
       zona_horaria:"America/Argentina/Buenos_Aires",
       politica_clave:{ min:12, mayus:true, minus:true, numero:true, temporal_horas:24 },

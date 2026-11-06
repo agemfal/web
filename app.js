@@ -443,7 +443,7 @@ const App = {
     // Service worker: para recibir notificaciones push con la página cerrada (solo con la API real)
     // (también en la demo: Chrome lo usa para ofrecer "Instalar app")
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-    // Sesión de 3 horas: aviso en pantalla 10 minutos antes de que venza (en el celular llega además como notificación)
+    // Sesión de 8 horas (config.sesion_horas): aviso en pantalla 10 minutos antes de que venza (en el celular llega además como notificación)
     this.programarAvisoSesion();
     // Si este dispositivo ya dio permiso, se vuelve a registrar en el servidor (por si quedó a medias o cambió)
     if (CONFIG.MODO_DATOS !== "local" && hayModuloRBAC()) setTimeout(() => this.pushResincronizar(), 3000);
@@ -789,7 +789,7 @@ const App = {
         headers:{ Authorization:"Bearer " + sessionStorage.getItem("token"), "Content-Type":"application/json" },
         body: metodo === "GET" ? undefined : JSON.stringify(body || {}) });
       if (res.status === 401 && ruta !== "/auth/logout") {
-        // El ingreso consulta por qué se cerró (otro dispositivo o 3 horas) para avisarle a la persona
+        // El ingreso consulta por qué se cerró (otro dispositivo o se cumplió su tiempo) para avisarle a la persona
         const viejo = sessionStorage.getItem("token"); sessionStorage.clear();
         try { if (viejo) sessionStorage.setItem("tokenViejo", viejo); } catch {}
         location.replace(CONFIG.URL_LOGIN);
