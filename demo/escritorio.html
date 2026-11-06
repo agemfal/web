@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Inicio</title>
 <script src="ux.js?v=04084cdf57"></script>
-<link rel="stylesheet" href="estilos.css?v=1337aeadcf">
+<link rel="stylesheet" href="estilos.css?v=84ca19bcc9">
 </head>
 <body>
 <main id="app"></main>
@@ -65,7 +65,8 @@ App.iniciar({
     // Indicadores: cada uno abre Incidentes con ese filtro; los ceros se atenúan
     const kpi = (titulo, n, clase, ic, filtro) => `<a class="kpi ${n ? clase : "cero"}" href="incidentes.html?filtro=${filtro}" aria-label="${n} ${titulo}: ver en Incidentes">
       <span class="k-tit">${icono(ic)}${esc(titulo)}</span><span class="k-num">${n}</span></a>`;
-    const resumen = `${s.criticos} críticos | ${slaVencidos} SLA vencidos | ${slaRiesgo} SLA en riesgo | ${escalamientos} escalamientos`;
+    const altos = d.incidentes.filter(i => i.prioridad != null && sevInc(i.prioridad) === "warn").length;   // INC de prioridad Alta
+    const resumen = `${s.criticos} críticos | ${altos} altos | ${slaVencidos} SLA vencidos | ${slaRiesgo} SLA en riesgo | ${escalamientos} escalamientos`;
 
     // Agrupa los servicios por red, en orden fijo: Red Fija → Red Móvil → Empresas (otras al final)
     const ORDEN_REDES = ["Red Fija", "Red Móvil", "Empresas"];
@@ -91,6 +92,7 @@ App.iniciar({
       </section>
       <div class="kpis">
         ${kpi("Críticos", s.criticos, "crit", "alerta", "crit")}
+        ${kpi("Altos", altos, "warn", "alerta", "altos")}
         ${kpi("SLA vencidos", slaVencidos, "crit", "reloj", "vencidos")}
         ${kpi("SLA en riesgo", slaRiesgo, "warn", "reloj", "riesgo")}
         ${kpi("Escalando", escalamientos, "warn", "subir", "escalando")}

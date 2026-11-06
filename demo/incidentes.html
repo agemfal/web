@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Incidentes</title>
 <script src="ux.js?v=04084cdf57"></script>
-<link rel="stylesheet" href="estilos.css?v=1337aeadcf">
+<link rel="stylesheet" href="estilos.css?v=84ca19bcc9">
 </head>
 <body>
 <main id="app"></main>
@@ -23,6 +23,7 @@ let filtro = new URLSearchParams(location.search).get("filtro") || "todos";   //
 const FILTROS = [
   ["todos", "Todos", () => true],
   ["crit", "Críticos", i => sevInc(i.prioridad) === "crit"],
+  ["altos", "Altos", i => i.prioridad != null && sevInc(i.prioridad) === "warn"],
   ["vencidos", "SLA vencido", i => !!i.sla?.vencido],
   ["riesgo", "SLA en riesgo", i => !!i.sla?.riesgo && !i.sla.vencido],
   ["escalando", "Escalando", i => !!i.escalado],

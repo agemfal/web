@@ -595,7 +595,8 @@ body.con-redactor{padding-bottom:calc(var(--nav) + 100px + env(safe-area-inset-b
 .ic-txt svg.i{width:14px; height:14px}
 /* Indicadores del Escritorio */
 .kpis{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px}
-@media (min-width:560px){ .kpis{grid-template-columns:repeat(4,minmax(0,1fr))} }
+.kpis > :last-child:nth-child(odd){grid-column:1 / -1}        /* con 5 indicadores, el último ocupa la fila entera */
+@media (min-width:560px){ .kpis{grid-template-columns:repeat(5,minmax(0,1fr))} .kpis > :last-child:nth-child(odd){grid-column:auto} }
 .kpi{display:flex; flex-direction:column; gap:2px; text-align:left; padding:10px 12px; min-height:64px; border-radius:var(--radio-sm);
   background:var(--panel); border:1px solid var(--linea); color:var(--texto); text-decoration:none; transition:background var(--rapido) var(--curva)}
 .kpi:hover{background:var(--panel2)}
