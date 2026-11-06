@@ -14,7 +14,7 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=39"></script>
+<script src="rbac-demo.js?v=40"></script>
 <script src="app.js"></script>
 <script>
 /* INICIO — salud de la red a nivel servicio (estado por INC asociados) */
@@ -32,12 +32,13 @@ function debatesDe(sid){
   const lista = debates.incidentes.filter(i => i.servicios.includes(sid));
   return lista.length ? `<div class="incs-serv">${lista.map(i => C.tarjetaInc(i, { nivel:1 })).join("")}</div>` : "";
 }
-// Lo que espera por vos: INC con un equipo tuyo sin tomar (con el botón Tomar)
+// Lo que espera por vos: INC con un equipo tuyo sin atender (Enterado si sos Jefe, Tomar si sos Operador)
 function atencion(){
   if (!debates || debates.error) return "";
-  const lista = debates.incidentes.filter(i => i.equipos.some(e => e.estado === "pendiente" && (e.acciones || []).some(a => a.accion === "tomar")));
+  const lista = debates.incidentes.filter(i => (i.enterado || []).length
+    || i.equipos.some(e => e.estado === "pendiente" && (e.acciones || []).some(a => a.accion === "tomar")));
   if (App.rol === "LECTURA") return "";
-  return `<div class="seccion-tit"><h2>Requiere tu atención</h2><small>${lista.length ? `${lista.length} sin tomar en tus equipos` : ""}</small></div>
+  return `<div class="seccion-tit"><h2>Requiere tu atención</h2><small>${lista.length ? `${lista.length} sin atender en tus equipos` : ""}</small></div>
     ${lista.length ? `<div class="lista-tinc">${lista.map(i => C.tarjetaInc(i)).join("")}</div>`
       : `<div class="vacio-suave">${icono("check")}Nada pendiente en tus equipos.</div>`}`;
 }
