@@ -14,11 +14,14 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=38"></script>
+<script src="rbac-demo.js?v=39"></script>
 <script src="app.js"></script>
 <script>
-/* NOTIFICACIONES — menciones, convocatorias y avisos; cada una lleva a donde corresponde */
-let datos = null, error = null, filtro = "todas";
+/* NOTIFICACIONES — pensada para gente ocupada, de arriba hacia abajo:
+   1. Para atender: una tarjeta por INC que espera que yo actúe (Enterado / Tomar), con su nivel y SLA. Se va sola al atenderlo.
+   2. Para decidir: INC cerrados que volvieron a entrar.
+   3. Novedades: el resto (menciones, Enterado de otros, cierres, cambios). Los niveles y SLA sueltos quedan en "Historial". */
+let datos = null, error = null, filtro = "novedades";
 const TIPO = {
   mencion:      { ic:"mensaje", txt:"Mención",      clase:"crit" },
   convocatoria: { ic:"equipo",  txt:"Convocatoria", clase:"warn" },
@@ -38,6 +41,33 @@ async function recargar(){
   datos = nuevo; App.redibujar();
 }
 
+// Una tarjeta por INC para atender: qué equipos míos esperan, en qué nivel va y el botón para cortarlo
+function tarjetaAtender(){
+  const xs = datos.atender || [];
+  if (!xs.length) return "";
+  return C.tarjeta({ titulo:`Para atender (${xs.length})`, iconoTit:"alerta", cuerpo:`<ul class="lista">${xs.map(x => {
+    const inc = esc(x.inc);
+    const niveles = x.equipos.map(e => { const s = e.escalamiento || {};
+      return `${esc(e.nombre || "—")}${s.estado === "esperando"
+        ? (s.nivel === 0 ? ` · nivel 1 ${enCuanto(s.proximo_en)}` : ` · nivel ${s.nivel} de ${s.niveles}${s.proximo_en ? ` · nivel ${s.nivel + 1} ${enCuanto(s.proximo_en)}` : ""}`)
+        : s.motivo === "agotado" ? " · escalamiento agotado" : ""}`; }).join("<br>");
+    const pend = clave => App.pendientes.has(clave);
+    const botones = [
+      ...(x.enterado.length ? [pend(`${x.inc}:enterado`)
+        ? `<button class="boton chico" data-accion="deshacer:${inc}:enterado">Enterado · Deshacer</button>`
+        : `<button class="boton chico primario" data-accion="inc:enterado:${inc}:enterado">${icono("check")}Enterado</button>`] : []),
+      ...x.tomar.map(t => pend(`${x.inc}:${t.id}`)
+        ? `<button class="boton chico" data-accion="deshacer:${inc}:${esc(t.id)}">Tomando · Deshacer</button>`
+        : `<button class="boton chico primario" data-accion="inc:tomar:${inc}:${esc(t.id)}">${icono("mano")}Tomar${x.tomar.length > 1 ? " · " + esc(t.nombre) : ""}</button>`),
+      `<button class="boton chico" data-accion="abririnc:${inc}">${icono("mensaje")}Chat</button>`];
+    return `<li class="crit alto"><span class="ic">${icono("subir")}</span>
+      <span class="cuerpo"><b style="white-space:normal">${esc(x.titulo || x.inc)}</b>
+        <small><span class="mono-inc">${inc}</span> ${C.chipInc(x.prioridad)}${C.chipSla(x.sla)}</small>
+        <span class="cambio" style="color:var(--suave)">${niveles}${x.con_llamada ? " · te llamaron" : ""}</span>
+        <span class="btns" style="margin-top:6px">${botones.join("")}</span></span></li>`;
+  }).join("")}</ul>` });
+}
+
 function liNotificacion(n){
   const t = TIPO[n.tipo] || TIPO.general;
   return `<li class="${n.leida ? "" : t.clase} alto clic" data-accion="n:abrir:${esc(n.id)}" style="${n.leida ? "opacity:.6" : ""}">
@@ -45,7 +75,7 @@ function liNotificacion(n){
     <span class="cuerpo"><b style="white-space:normal">${esc(n.titulo)}</b>
       ${n.cuerpo ? `<span class="cambio" style="color:var(--suave)">${esc(n.cuerpo)}</span>` : ""}
       <small>${esc(t.txt)}${n.silenciosa ? " · en silencio (fuera de tu horario)" : ""}${n.con_llamada ? " · también te llamaron" : ""} · ${hace(n.fecha)}${n.equipo ? " · " + esc(n.equipo) : ""}</small>
-      ${n.puede_tomar ? `<span class="btns" style="margin-top:6px">${App.pendientes.has(`${n.inc}:${n.team_id}`)
+${n.puede_tomar && filtro !== "historial" ? `<span class="btns" style="margin-top:6px">${App.pendientes.has(`${n.inc}:${n.team_id}`)
         ? `<button class="boton chico" data-accion="deshacer:${esc(n.inc)}:${esc(n.team_id)}">Tomando · Deshacer</button>`
         : `<button class="boton chico primario" data-accion="inc:tomar:${esc(n.inc)}:${esc(n.team_id)}">${icono("mano")}Tomar ${esc(n.inc)}${n.equipo ? " · " + esc(n.equipo) : ""}</button>`}</span>` : ""}</span>
     ${n.leida ? "" : `<span class="pastilla" style="background:var(--acento)">nueva</span>`}
@@ -85,16 +115,22 @@ App.iniciar({
   render: () => {
     if (error) return C.tarjeta({ cuerpo: C.vacio(error, "alerta") });
     if (!datos) return C.tarjeta({ cuerpo: C.vacio("Cargando…", "reloj") });
-    const opciones = [["todas", "Todas"], ["nuevas", "Sin leer"], ["mencion", "Menciones"], ["escalamiento", "Escalamientos"], ["convocatoria", "Convocatorias"]];
-    const pasa = { todas:() => true, nuevas:n => !n.leida, mencion:n => n.tipo === "mencion", escalamiento:n => n.tipo === "escalamiento", convocatoria:n => n.tipo === "convocatoria" || n.tipo === "convocatoria_general" };
+    // Novedades = todo menos los niveles y SLA sueltos (esos viven en su tarjeta de "Para atender"). Historial = todo, sin filtrar.
+    const opciones = [["novedades", "Novedades"], ["nuevas", "Sin leer"], ["historial", "Historial"]];
+    const pasa = { novedades:n => !n.agrupada, nuevas:n => !n.agrupada && !n.leida, historial:() => true };
     const vis = datos.notificaciones.filter(pasa[filtro]);
+    const sinLeer = datos.notificaciones.filter(pasa.nuevas).length;
+    const nada = !(datos.atender || []).length && !(datos.reingresos || []).length;
     return `
-      <div class="filtros">${opciones.map(([id, txt]) =>
-        `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}">${txt} <span class="num">${datos.notificaciones.filter(pasa[id]).length}</span></button>`).join("")}</div>
+      ${tarjetaAtender()}
       ${tarjetaReingresos()}
-      ${datos.no_leidas ? `<button class="boton" data-accion="n:todas">${icono("check")} Marcar todas como leídas (${datos.no_leidas})</button>` : ""}
-      ${C.tarjeta({ titulo:"Notificaciones", iconoTit:"campana",
-        cuerpo: vis.length ? `<ul class="lista">${vis.map(liNotificacion).join("")}</ul>` : C.vacio(filtro === "todas" ? "No tenés notificaciones" : "Nada por acá") })}`;
+      ${nada && filtro === "novedades" && !vis.length ? C.tarjeta({ cuerpo: C.vacio("Todo al día: no hay nada para atender", "check") }) : ""}
+      <div class="filtros">${opciones.map(([id, txt]) =>
+        `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}">${txt}${id === "nuevas" && sinLeer ? ` <span class="num">${sinLeer}</span>` : ""}</button>`).join("")}</div>
+      ${vis.length ? C.tarjeta({ titulo: filtro === "historial" ? "Historial completo" : "Novedades", iconoTit:"campana",
+        extra: sinLeer && filtro !== "historial" ? `<button class="boton chico" style="margin-left:auto" data-accion="n:todas">${icono("check")}Marcar leídas</button>` : "",
+        cuerpo:`<ul class="lista">${vis.map(liNotificacion).join("")}</ul>` })
+        : filtro === "novedades" ? "" : C.tarjeta({ cuerpo: C.vacio(filtro === "nuevas" ? "No hay novedades sin leer" : "Nada por acá") })}`;
   },
   alMontar: () => { if (!datos && !error) recargar(); },
   alNotificar: () => recargar(),

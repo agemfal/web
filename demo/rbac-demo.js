@@ -2095,7 +2095,7 @@ const ReglasRBAC = (() => {
       const avisar = unicos([...jefes, ...i.equipos.flatMap(t => delEquipo(raw, t).filter(m => incEquipo(raw, i.inc, t).asignado_id === m.user_id).map(m => m.user_id))]);
       const titulo = `${sla.vencido ? "⛔ SLA vencido" : "⏱ SLA en riesgo"} · ${i.inc} · ${nombreCat(raw, i.prioridad)}`;
       const cuerpo = `${i.titulo}. SLA de ${sla.minutos} min ${sla.vencido ? "vencido" : `vence en ${Math.max(0, sla.restante_min)} min`}.`;
-      avisar.forEach(uid => ["app", "email"].forEach(canal => k.plan.notificaciones.push({ user_id:uid, team_id:i.equipos[0] || null, canal, titulo, cuerpo, tipo:"sla", enlace:"incidentes.html" })));
+      avisar.forEach(uid => ["app", "email"].forEach(canal => k.plan.notificaciones.push({ user_id:uid, team_id:i.equipos[0] || null, canal, titulo, cuerpo, tipo:"sla", enlace:"incidentes.html", inc:i.inc })));
       k.audEquipos(sla.vencido ? "SLA_VENCIDO" : "SLA_EN_RIESGO", "incidente", i.inc, i.equipos, { antes:null, despues:{ inc:i.inc, prioridad:i.prioridad, sla_min:sla.minutos, vence_en:sla.vence_en } }, { justificacion:null });
     }
     for (const i of abiertos) for (const teamId of i.equipos) {
@@ -2458,15 +2458,38 @@ const ReglasRBAC = (() => {
     const solo = ["1", "true", true].includes(e.query.no_leidas);
     const mias = arr(raw.notificaciones).filter(n => n.user_id === auth.id && n.canal === "app")
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
-    const lista = (solo ? mias.filter(n => !n.leida_en) : mias).slice(0, Math.min(100, Number(e.query.limite) || 50));
+    // "Para atender": una tarjeta por INC que sigue esperando que yo actúe (Enterado si soy Jefe, Tomar si soy Operador)
+    // y del que ya me llegó un escalamiento o un aviso de SLA. Los niveles y SLA de ese INC no se repiten como líneas sueltas.
+    const AGRUPA = ["escalamiento", "sla"];
+    const atender = unicos(mias.filter(n => AGRUPA.includes(n.tipo) && n.inc).map(n => n.inc)).map(inc => incidenteDe(raw, inc)).filter(Boolean)
+      .map(i => {
+        const ent = equiposEnterado(raw, auth, i);
+        const tomar = i.equipos.filter(t => accionesIncEquipo(raw, auth, incEquipo(raw, i.inc, t)).some(a => a.accion === "tomar"));
+        const mios = unicos([...ent.map(t => t.id), ...tomar]);
+        if (!mios.length) return null;
+        const ultimo = mias.find(n => n.inc === i.inc && AGRUPA.includes(n.tipo));
+        return { inc:i.inc, titulo:i.titulo, prioridad:i.prioridad, categoria:vistaCategoria(raw, i.prioridad), sla:slaDe(raw, i),
+          enterado:ent, tomar:tomar.map(t => ({ id:t, nombre:equipo(raw, t)?.nombre || null })),
+          equipos: equiposInc(raw, auth, i).filter(e => mios.includes(e.id)).map(e => ({ id:e.id, nombre:e.nombre, escalamiento:e.escalamiento })),
+          ultimo_aviso:iso(ultimo?.created_at), con_llamada:mias.some(n => n.inc === i.inc && n.con_llamada && !n.leida_en) };
+      }).filter(Boolean).sort((a, b) => (a.prioridad ?? 9) - (b.prioridad ?? 9) || String(b.ultimo_aviso).localeCompare(String(a.ultimo_aviso)));
+    // Un escalamiento o SLA de un INC que ya se atendió o se cerró queda como leído solo (no se borra: sigue en el historial)
+    const vigente = n => !(AGRUPA.includes(n.tipo) && n.inc && (!incidenteDe(raw, n.inc)
+      || !arr(incidenteDe(raw, n.inc).equipos).some(t => (auth.es_admin || auth.equipos.some(x => x.id === t)) && incEquipo(raw, n.inc, t).estado_equipo === "pendiente")));
+    const sinLeer = n => !n.leida_en && vigente(n);
+    const lista = (solo ? mias.filter(sinLeer) : mias).slice(0, Math.min(100, Number(e.query.limite) || 50));
     return k.lectura({
+      atender,
+      campana: atender.length + mias.filter(n => sinLeer(n) && !AGRUPA.includes(n.tipo)).length,
       notificaciones: lista.map(n => ({ id:String(n.id), tipo:n.tipo || "general", titulo:n.titulo, cuerpo:n.cuerpo || "", enlace:n.enlace || null,
-        fecha:iso(n.created_at), leida:!!n.leida_en, silenciosa:!!n.silenciosa, con_llamada:!!n.con_llamada, inc:n.inc || null, team_id:n.team_id || null,
+        fecha:iso(n.created_at), leida:!!n.leida_en || !vigente(n), agrupada: AGRUPA.includes(n.tipo) && !!n.inc,
+        silenciosa:!!n.silenciosa, con_llamada:!!n.con_llamada, inc:n.inc || null, team_id:n.team_id || null,
+        puede_enterado: n.tipo === "escalamiento" && !!n.inc && equiposEnterado(raw, auth, incidenteDe(raw, n.inc)).length > 0,
         // Escalamiento de un INC que sigue sin tomar en mi equipo: se puede tomar desde la notificación
         puede_tomar: n.tipo === "escalamiento" && !!n.inc && !!n.team_id && (() => { const i = incidenteDe(raw, n.inc);
           return !!i && i.equipos.includes(n.team_id) && accionesIncEquipo(raw, auth, incEquipo(raw, n.inc, n.team_id)).some(a => a.accion === "tomar"); })(),
         equipo: n.team_id ? equipo(raw, n.team_id)?.nombre || null : null })),
-      no_leidas: mias.filter(n => !n.leida_en).length,
+      no_leidas: mias.filter(sinLeer).length,
       reingresos: arr(raw.reingresos).filter(rg => puedeDecidirReingreso(raw, auth, rg)).map(rg => vistaReingreso(raw, rg))
     });
   }

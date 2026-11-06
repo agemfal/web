@@ -581,7 +581,8 @@ const App = {
     el.innerHTML = `<div class="alarma-caja"><div class="alarma-ic">${icono("alerta")}</div><small class="alarma-tipo">${esc(tipo)}</small>
       <h2>${esc(n.titulo)}</h2>${n.cuerpo ? `<p>${esc(n.cuerpo)}</p>` : ""}
       <p class="alarma-sonido" hidden>Tocá la pantalla para activar el sonido.</p>
-      <div class="btns">${n.puede_tomar && n.inc && n.team_id ? `<button class="boton primario" data-al="tomar">${icono("mano")}Tomar el INC</button>` : ""}
+      <div class="btns">${n.puede_tomar && n.inc && n.team_id ? `<button class="boton primario" data-al="tomar">${icono("mano")}Tomar el INC</button>`
+        : n.puede_enterado && n.inc ? `<button class="boton primario" data-al="enterado">${icono("check")}Enterado</button>` : ""}
         ${n.enlace && !prueba ? `<button class="boton" data-al="ver">Ver</button>` : ""}<button class="boton" data-al="silenciar">Silenciar</button></div></div>`;
     document.body.append(el);
     const tituloOrig = document.title.replace(/^🚨 /, "");
@@ -591,6 +592,7 @@ const App = {
     el.querySelector("[data-al=silenciar]").onclick = () => this.cerrarAlarma();
     el.querySelector("[data-al=ver]")?.addEventListener("click", () => { this.cerrarAlarma(); location.href = n.enlace; });
     el.querySelector("[data-al=tomar]")?.addEventListener("click", () => { this.cerrarAlarma(); this.accionInc(`inc:tomar:${n.inc}:${n.team_id}`); });
+    el.querySelector("[data-al=enterado]")?.addEventListener("click", () => { this.cerrarAlarma(); this.accionInc(`inc:enterado:${n.inc}:enterado`); });
     if (!prueba) { try { sessionStorage.setItem("alarmaActual", JSON.stringify(n)); } catch {} }
     tic();
     el.querySelector("[data-al]")?.focus();
@@ -610,22 +612,26 @@ const App = {
     const r = await this.api("GET", "/notificaciones?no_leidas=1&limite=20");
     if (!r.cuerpo || !r.cuerpo.ok) return;
     const { notificaciones, no_leidas } = r.cuerpo.data, b = $("#badge");
-    if (b) { b.hidden = !no_leidas; b.textContent = no_leidas > 99 ? "99+" : no_leidas; }
+    // La campana cuenta lo que hay que hacer: INC para atender + novedades sin leer (no cada nivel del escalamiento)
+    const campana = r.cuerpo.data.campana ?? no_leidas;
+    if (b) { b.hidden = !campana; b.textContent = campana > 99 ? "99+" : campana; }
+    const accionable = x => x.puede_tomar || x.puede_enterado;
     let vistas; try { vistas = new Set(JSON.parse(sessionStorage.getItem("notifVistas") || "[]")); } catch { vistas = new Set(); }
     const nuevas = notificaciones.filter(n => !vistas.has(n.id) && !n.silenciosa);   // fuera de mi horario: sin aviso emergente
     // Alarma: lo que sigue sin atender y hay que accionar. Al abrir la app solo si todavía se puede tomar.
     const esAlarma = x => this.ALARMA_TIPOS.includes(x.tipo) && !x.silenciosa;
-    const candidatas = nuevas.filter(x => esAlarma(x) && (!primera || x.puede_tomar));
-    const sonada = candidatas.find(x => x.puede_tomar) || candidatas[0];
+    const candidatas = nuevas.filter(x => esAlarma(x) && (!primera || accionable(x)));
+    const sonada = candidatas.find(accionable) || candidatas[0];
     if (sonada && this.alarmaOn()) this.alarma(sonada);
     // Si otro equipo ya tomó el INC, la alarma de ese aviso se apaga sola
     const act = this._alarma?.n;
-    if (act?.puede_tomar && act.id !== "prueba" && !notificaciones.some(x => x.id === act.id && x.puede_tomar)) { this.cerrarAlarma(); this.aviso("El INC ya fue tomado", 3000); }
+    if (act && accionable(act) && act.id !== "prueba" && !notificaciones.some(x => x.id === act.id && accionable(x))) { this.cerrarAlarma(); this.aviso(act.puede_enterado ? "Ya dieron Enterado en ese INC" : "El INC ya fue tomado", 3000); }
     if (!sonada && nuevas.length && !primera && !/notificaciones\.html$/.test(location.pathname)) {
-      const n = nuevas.find(x => x.puede_tomar) || nuevas[0];      // un escalamiento que se puede tomar va primero, con su botón
+      const n = nuevas.find(accionable) || nuevas[0];      // un escalamiento que se puede tomar va primero, con su botón
       // En la demo la llamada no sale: se avisa que en producción sonaría el teléfono
       this.aviso(`${n.con_llamada ? "Llamada (simulada) · " : ""}${n.titulo}${nuevas.length > 1 ? ` (+${nuevas.length - 1})` : ""}`, 6000,
-        n.puede_tomar ? { etiqueta:"Tomar", fn:() => this.accionInc(`inc:tomar:${n.inc}:${n.team_id}`) } : null);
+        n.puede_tomar ? { etiqueta:"Tomar", fn:() => this.accionInc(`inc:tomar:${n.inc}:${n.team_id}`) }
+        : n.puede_enterado ? { etiqueta:"Enterado", fn:() => this.accionInc(`inc:enterado:${n.inc}:enterado`) } : null);
     }
     notificaciones.forEach(n => vistas.add(n.id));
     try { sessionStorage.setItem("notifVistas", JSON.stringify([...vistas].slice(-200))); } catch {}
