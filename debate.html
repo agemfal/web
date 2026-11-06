@@ -14,7 +14,7 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=33"></script>
+<script src="rbac-demo.js?v=34"></script>
 <script src="app.js"></script>
 <script>
 /* DEBATE — chat del incidente: mensajes, fotos, archivos, notas y fijados, con la info del INC a mano.
@@ -147,7 +147,7 @@ function bloqueInfo(d){
       <dt>Categoría</dt><dd>${i.prioridad ? C.chipInc(i.prioridad) : "—"}${i.puede_cambiar_categoria ? ` <button class="boton chico" data-accion="cat:${esc(i.inc)}:${i.prioridad}">${icono("cambiar")}Cambiar</button>` : ""}</dd>
       ${i.categoria?.prioridad ? `<dt>Prioridad</dt><dd>${esc(i.categoria.prioridad)}</dd><dt>Incidente mayor</dt><dd>${esc(i.categoria.grave)}</dd>` : ""}
       ${i.sla ? `<dt>SLA</dt><dd>${C.chipSla(i.sla)} <small style="color:var(--tenue)">${i.sla.minutos} min · vence ${new Date(i.sla.vence_en).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" })}</small></dd>` : ""}
-      <dt>Estado</dt><dd>${i.abierto ? "Abierto" : "Ya no está abierto"}</dd>
+      <dt>Estado</dt><dd>${i.abierto ? "Abierto" : "Ya no está abierto"}${i.puede_cerrar ? ` <button class="boton chico peligro" data-accion="cerrarinc:${esc(i.inc)}">${icono("check")}Cerrar INC</button>` : ""}</dd>
       ${i.inicio ? `<dt>Inicio</dt><dd>${new Date(i.inicio).toLocaleString("es-AR", { dateStyle:"short", timeStyle:"short" })} · ${hace(i.inicio)}</dd>` : ""}
       ${i.afectados != null ? `<dt>Afectados</dt><dd>${Number(i.afectados).toLocaleString("es-AR")} clientes</dd>` : ""}
       <dt>Servicios</dt><dd>${i.servicios.length ? `<span class="etiquetas">${i.servicios.map(s => C.chip("info", s.nombre + (s.red ? " · " + s.red : ""))).join("")}</span>` : "—"}</dd>
