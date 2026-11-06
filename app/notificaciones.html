@@ -14,7 +14,7 @@
 </head>
 <body>
 <main id="app"></main>
-<script src="rbac-demo.js?v=36"></script>
+<script src="rbac-demo.js?v=37"></script>
 <script src="app.js"></script>
 <script>
 /* NOTIFICACIONES — menciones, convocatorias y avisos; cada una lleva a donde corresponde */
@@ -52,6 +52,26 @@ function liNotificacion(n){
   </li>`;
 }
 
+// INC cerrados en el NOC que volvieron a entrar abiertos por la API: se consulta si se reabren (SQL 035)
+function tarjetaReingresos(){
+  const rs = datos.reingresos || [];
+  if (!rs.length) return "";
+  return C.tarjeta({ titulo:`Para decidir (${rs.length})`, iconoTit:"alerta", cuerpo:`<ul class="lista">${rs.map(r => `
+    <li class="warn alto"><span class="ic">${icono("alerta")}</span>
+      <span class="cuerpo"><b style="white-space:normal">${esc(r.inc)}${r.titulo ? " · " + esc(r.titulo) : ""}</b>
+        <span class="cambio" style="color:var(--suave)">Lo cerraron en el NOC${r.cerrado_en ? " " + hace(r.cerrado_en) : ""} y volvió a entrar ${r.estado_nuevo === "en_curso" ? "en curso" : "abierto"} por la API ${hace(r.detectado_en)}. ¿Se reabre?</span>
+        <small>${r.prioridad ? C.chipInc(r.prioridad) : ""}${r.equipos.length ? " · " + esc(r.equipos.join(", ")) : ""}</small>
+        <span class="btns" style="margin-top:6px">
+          <button class="boton chico primario" data-accion="re:reabrir:${esc(r.inc)}">${icono("subir")}Reabrir</button>
+          <button class="boton chico" data-accion="re:mantener_cerrado:${esc(r.inc)}">Mantener cerrado</button></span></span>
+    </li>`).join("")}</ul>` });
+}
+async function decidir(accion, inc){
+  const ok = await App.enviar("POST", `/incidentes/${encodeURIComponent(inc)}/acciones`, { accion },
+    accion === "reabrir" ? `${inc} reabierto: arranca el escalamiento` : `${inc} sigue cerrado`);
+  if (ok) recargar();
+}
+
 async function abrir(id){
   const n = datos.notificaciones.find(x => x.id === id);
   if (!n.leida) await App.api("POST", "/notificaciones/leer", { ids:[id] });
@@ -71,6 +91,7 @@ App.iniciar({
     return `
       <div class="filtros">${opciones.map(([id, txt]) =>
         `<button data-accion="f:${id}" class="${filtro === id ? "activo" : ""}">${txt} <span class="num">${datos.notificaciones.filter(pasa[id]).length}</span></button>`).join("")}</div>
+      ${tarjetaReingresos()}
       ${datos.no_leidas ? `<button class="boton" data-accion="n:todas">${icono("check")} Marcar todas como leídas (${datos.no_leidas})</button>` : ""}
       ${C.tarjeta({ titulo:"Notificaciones", iconoTit:"campana",
         cuerpo: vis.length ? `<ul class="lista">${vis.map(liNotificacion).join("")}</ul>` : C.vacio(filtro === "todas" ? "No tenés notificaciones" : "Nada por acá") })}`;
@@ -82,6 +103,7 @@ App.iniciar({
     if (id.startsWith("f:")) { filtro = id.slice(2); App.redibujar(); return true; }
     if (id === "n:todas") { App.api("POST", "/notificaciones/leer", {}).then(() => { recargar(); App.revisarNotificaciones(); }); return true; }
     if (id.startsWith("n:abrir:")) { abrir(id.slice(8)); return true; }
+    if (id.startsWith("re:")) { const [, accion, inc] = id.split(":"); decidir(accion, inc); return true; }
   }
 });
 </script>

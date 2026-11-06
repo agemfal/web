@@ -112,7 +112,7 @@ const ReglasRBAC = (() => {
     "asignaciones_liberar","escalamientos_detener","debates_ins","debates_upd","participantes_ins","participantes_upd",
     "mensajes_ins","mensajes_upd","incidentes_ins","notificaciones","notificaciones_leer","auditoria","correos",
     "sesiones_ins","sesiones_cerrar","sesiones_revocar_otras","catalogo_servicios","inc_colaboradores_ins","colaboradores_del",
-    "pasos_ins","pasos_hechos","pasos_cancelar","incidentes_cerrar"];
+    "pasos_ins","pasos_hechos","pasos_cancelar","incidentes_cerrar","reingresos_avisados","reingresos_decidir"];
 
   /* ---------- Utilidades ---------- */
   const txt    = v => String(v ?? "").trim();
@@ -1419,6 +1419,12 @@ const ReglasRBAC = (() => {
   // Jefes/Gestores y Administradores conducen: no toman INC (lo toma un Operador), pero son los que lo cierran
   const jefeOMas = (raw, auth) => !!auth && (auth.es_admin || !!rolDef(raw, auth.rol)?.puede_ser_responsable);
   // Los INC reales (origen n8n) se cierran en la herramienta: su estado lo manda la sincronización (SQL 034)
+  // INC cerrado en el NOC que volvió a entrar abierto por la API (SQL 035): deciden Jefes de sus equipos y Administradores
+  const puedeDecidirReingreso = (raw, auth, rg) => !!auth && (auth.es_admin
+    || (jefeOMas(raw, auth) && arr(rg.equipos).some(t => puede(auth, "reabrir_inc", { team_id:t }, raw))));
+  const vistaReingreso = (raw, rg) => ({ id:rg.id, inc:rg.inc, titulo:rg.titulo || null, prioridad:rg.prioridad ?? null,
+    categoria: rg.prioridad != null ? vistaCategoria(raw, rg.prioridad) : null, estado_nuevo:rg.estado_nuevo || "abierto",
+    detectado_en:iso(rg.detectado_en), cerrado_en:iso(rg.cerrado_en), equipos:arr(rg.equipos).map(t => equipo(raw, t)?.nombre || t) });
   const puedeCerrarInc = (raw, auth, i) => !!auth && i.origen !== "n8n" && (auth.es_admin
     || (jefeOMas(raw, auth) && arr(i.equipos).some(t => puede(auth, "cerrar_inc", { team_id:t }, raw))));
 
@@ -1752,8 +1758,9 @@ const ReglasRBAC = (() => {
     const k = contexto(e, auth, raw, "incidente"), b = e.body, inc = txt(e.params.inc).toUpperCase(), teamId = txt(b.equipo_id);
     k.team_id = equipo(raw, teamId) ? teamId : null;
     const no = sinSesion(k); if (no) return no;
-    const accion = txt(b.accion).toLowerCase(), PERM = { tomar:"tomar_inc", reconocer:"ack_inc", unirse:"tomar_inc", sumar_equipo:"agregar_equipo", cerrar:"cerrar_inc" };
-    if (!PERM[accion]) return k.fallo(400, "ACCION_INVALIDA", "La acción debe ser tomar, reconocer, unirse, sumar_equipo o cerrar");
+    const accion = txt(b.accion).toLowerCase(), PERM = { tomar:"tomar_inc", reconocer:"ack_inc", unirse:"tomar_inc", sumar_equipo:"agregar_equipo", cerrar:"cerrar_inc", reabrir:"reabrir_inc", mantener_cerrado:"reabrir_inc" };
+    if (!PERM[accion]) return k.fallo(400, "ACCION_INVALIDA", "La acción debe ser tomar, reconocer, unirse, sumar_equipo, cerrar, reabrir o mantener_cerrado");
+    if (accion === "reabrir" || accion === "mantener_cerrado") return decidirReingreso(k, auth, raw, inc, accion);
     const i = incidenteDe(raw, inc);
     if (!i) return k.fallo(404, "INC_INEXISTENTE", "El incidente no existe o ya no está abierto");
     if (accion === "cerrar") return cerrarInc(k, auth, raw, i);
@@ -1824,6 +1831,28 @@ const ReglasRBAC = (() => {
     if (ids.length) k.notificar(ids, `${inc} · cerrado por ${auth.nombre}`, `Motivo: ${motivo}`, k.team_id, ["app"], { tipo:"general", enlace:"incidentes.html" });
     return k.exito(200, { tipo:"incidente", inc }, { cerrado:true });
   }
+
+  // Reingreso (SQL 035): el INC que cerraron en el NOC volvió a llegar abierto por la API. Se reabre o se mantiene cerrado.
+  function decidirReingreso(k, auth, raw, inc, accion){
+    const rg = arr(raw.reingresos).find(x => x.inc === inc);
+    if (!rg) return k.fallo(404, "SIN_CONSULTA", "Ese INC no tiene una consulta pendiente (ya la decidió otra persona)");
+    k.team_id = arr(rg.equipos)[0] || null;
+    if (!puedeDecidirReingreso(raw, auth, rg)) return k.fallo(403, "SOLO_JEFES", "Solo los Jefes de los equipos del INC y los Administradores pueden decidirlo");
+    const reabrir = accion === "reabrir";
+    k.plan.reingresos_decidir.push({ id:rg.id, decision: reabrir ? "reabrir" : "mantener" });
+    k.audEquipos(reabrir ? "INC_REABIERTO" : "INC_REINGRESO_MANTENIDO_CERRADO", "incidente", inc, arr(rg.equipos),
+      { antes:{ estado:"cerrado" }, despues:{ estado: reabrir ? "abierto" : "cerrado" } }, { justificacion:"Volvió a entrar abierto por la API" });
+    const avisar = unicos(destinatariosReingreso(raw, rg)).filter(id => id !== auth.id);
+    if (avisar.length) k.notificar(avisar, `${inc} · ${reabrir ? "reabierto" : "sigue cerrado"} por ${auth.nombre}`,
+      reabrir ? "Volvió a entrar abierto por la API y se reabrió: los equipos quedan pendientes y arranca el escalamiento."
+              : "Volvió a entrar abierto por la API y se decidió mantenerlo cerrado.", k.team_id, ["app"], { tipo:"general", enlace: reabrir ? "incidentes.html" : "notificaciones.html" });
+    return k.exito(200, { tipo:"incidente", inc }, { decision: reabrir ? "reabrir" : "mantener" });
+  }
+  // A quién se consulta: Jefes (y responsables) de los equipos del INC y Administradores, activos
+  const destinatariosReingreso = (raw, rg) => unicos([
+    ...raw.usuarios.filter(u => u.rol === "ADMIN").map(u => u.id),
+    ...arr(rg.equipos).flatMap(t => delEquipo(raw, t).filter(m => m.es_responsable || rolDef(raw, usuario(raw, m.user_id)?.rol)?.puede_ser_responsable).map(m => m.user_id))
+  ]).filter(id => usuario(raw, id)?.estado === "activo");
 
   // PUT /me/disponibilidad — WF47b: cuándo me pueden avisar (la matriz de escalamiento no lo pisa)
   // PUT /me/telefono — WF47c: mi teléfono para el canal Llamada (vacío = no me llaman)
@@ -2102,6 +2131,15 @@ const ReglasRBAC = (() => {
     }
     for (const [id, r] of enviados) k.aud("ESC_PASO_NOTIFICADO", "escalamiento", r.run?.id || id, r.t.id,
       { antes:null, despues:{ inc:r.i.inc, enviados:r.enviados, ...(r.omitidos.length ? { omitidos:r.omitidos } : {}) } }, { justificacion:null });
+    // INC cerrados en el NOC que volvieron a entrar abiertos por la API (SQL 035): se informa y se consulta
+    for (const rg of arr(raw.reingresos).filter(x => !x.avisado_en)) {
+      const ids = destinatariosReingreso(raw, rg);
+      if (ids.length) k.notificar(ids, `${rg.inc} volvió a entrar abierto`,
+        `${rg.titulo ? rg.titulo + ". " : ""}Lo habían cerrado en el NOC y la herramienta lo manda ${rg.estado_nuevo === "en_curso" ? "en curso" : "abierto"}. Decidí en Notificaciones si se reabre o sigue cerrado.`,
+        arr(rg.equipos)[0] || null, ["app", "email"], { tipo:"general", enlace:"notificaciones.html", inc:rg.inc });
+      k.plan.reingresos_avisados.push(rg.id);
+      k.audEquipos("INC_REINGRESO_AVISADO", "incidente", rg.inc, arr(rg.equipos), { antes:null, despues:{ estado_nuevo:rg.estado_nuevo, avisados:ids.length } }, { justificacion:null });
+    }
     return filtrarNotificaciones(raw, k.plan);
   }
 
@@ -2390,7 +2428,8 @@ const ReglasRBAC = (() => {
         puede_tomar: n.tipo === "escalamiento" && !!n.inc && !!n.team_id && (() => { const i = incidenteDe(raw, n.inc);
           return !!i && i.equipos.includes(n.team_id) && accionesIncEquipo(raw, auth, incEquipo(raw, n.inc, n.team_id)).some(a => a.accion === "tomar"); })(),
         equipo: n.team_id ? equipo(raw, n.team_id)?.nombre || null : null })),
-      no_leidas: mias.filter(n => !n.leida_en).length
+      no_leidas: mias.filter(n => !n.leida_en).length,
+      reingresos: arr(raw.reingresos).filter(rg => puedeDecidirReingreso(raw, auth, rg)).map(rg => vistaReingreso(raw, rg))
     });
   }
   // POST /notificaciones/leer { ids?:[] } — sin ids marca todas
@@ -2887,6 +2926,7 @@ const SimuladorRBAC = (() => {
     });
   }
   const foto = (e, ahora) => ({ ...Object.fromEntries(CLAVES_RAW.map(k => [k, e[k] || []])), config:e.config, incidentes:incidentesAbiertos(e),
+    reingresos:(e.reingresos || []).filter(r => !r.decidido_en),
     notificaciones:e.notificaciones.filter(n => n.canal === "app"), ahora,
     // Pasos programados de las secuencias de aviso que todavía no salieron (como noc_foto, SQL 031)
     escalamiento_pasos:(e.escalamiento_pasos || []).filter(p => !p.hecho_en && !p.cancelado_en) });
@@ -3007,6 +3047,16 @@ const SimuladorRBAC = (() => {
     for (const k of L("sla_avisos")) { e.sla_avisos ||= []; if (!e.sla_avisos.includes(k)) e.sla_avisos.push(k); }
     const incidentesCambiados = L("incidentes_upd");      // cambio de categoría: se aplica al tablero (o a los INC del demo)
     for (const c of incidentesCambiados) { const x = (e.incidentes_demo || []).find(y => y.inc === c.inc); if (x) Object.assign(x, { prioridad:c.prioridad, grave:c.grave }); }     // configuración (p. ej. política de notificaciones)
+    for (const id of L("reingresos_avisados")) { const r = (e.reingresos || []).find(x => x.id === id); if (r && !r.avisado_en) r.avisado_en = ahora; }
+    for (const c of L("reingresos_decidir")) {   // SQL 035: reabrir vuelve a abrir el INC con sus equipos pendientes
+      const r = (e.reingresos || []).find(x => x.id === c.id && !x.decidido_en); if (!r) continue;
+      Object.assign(r, { decidido_en:ahora, decision:c.decision, decidido_por:plan.actor_id || null });
+      if (c.decision === "reabrir") {
+        e.incidentes_cerrados = (e.incidentes_cerrados || []).filter(x => x !== r.inc);
+        e.incidentes_equipo.filter(x => x.inc === r.inc).forEach(x => Object.assign(x, { estado_equipo:"pendiente", asignado_id:null, reconocido_por:null, reconocido_en:null }));
+        e.escalamientos_vivos = e.escalamientos_vivos.filter(x => x.inc !== r.inc);
+      }
+    }
     for (const c of L("incidentes_cerrar")) { e.incidentes_cerrados ||= []; if (!e.incidentes_cerrados.includes(c.inc)) e.incidentes_cerrados.push(c.inc); }   // SQL 033
     for (const c of L("inc_equipo_upd")) {    // estado del equipo en el INC (tomar / reconocer)
       let x = e.incidentes_equipo.find(y => y.inc === c.inc && y.team_id === c.team_id);
