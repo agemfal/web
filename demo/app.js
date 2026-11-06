@@ -11,7 +11,7 @@ const CONFIG = {
   URL_API:      "/api",        // solo modo "api"
   URL_LOGIN:    "login.html",
   // auto-actualización (0 = desactivada): arranca con la última que mandó el servidor y se ajusta al leer GET /me
-  REFRESCO_SEG: (() => { try { return Number(sessionStorage.getItem("refrescoSeg")) || 10; } catch { return 10; } })(),
+  REFRESCO_SEG: (() => { try { return Number(sessionStorage.getItem("refrescoSeg")) || 20; } catch { return 20; } })(),
   // Demo → n8n: si tiene una URL (o se carga en Perfil), los cambios de categoría de un INC también se mandan
   // a ese webhook de n8n para que actualice el INC en la base. En modo "api" no hace falta: todo pasa por n8n.
   N8N_WEBHOOK_INC: "",

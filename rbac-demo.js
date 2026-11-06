@@ -1102,8 +1102,8 @@ const ReglasRBAC = (() => {
   }
 
   // Cada cuántos segundos se actualizan las pantallas (la barra de "Actualizado"). Lo define el Administrador.
-  const REFRESCO_OPCIONES = [5, 10, 15, 30, 60, 120, 300];
-  const refrescoSeg = raw => { const v = Number(raw.config?.refresco_seg); return REFRESCO_OPCIONES.includes(v) ? v : 10; };
+  const REFRESCO_OPCIONES = [5, 10, 15, 20, 30, 60, 120, 300];
+  const refrescoSeg = raw => { const v = Number(raw.config?.refresco_seg); return REFRESCO_OPCIONES.includes(v) ? v : 20; };     // 20 s: igual que n8n
   // PUT /config/actualizacion { segundos, justificacion } — solo Administrador
   function editarActualizacion(e, auth, raw){
     const k = contexto(e, auth, raw, "config"), b = e.body;

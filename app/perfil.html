@@ -15,8 +15,8 @@
 <body>
 <main id="app"></main>
 <!-- Demo Local: backend simulado del módulo de usuarios y equipos -->
-<script src="rbac-demo.js?v=d78e0f89fb"></script>
-<script src="app.js?v=247169b328"></script>
+<script src="rbac-demo.js?v=3368b5abc8"></script>
+<script src="app.js?v=bbff451a88"></script>
 <script>
 /* PERFIL — cuenta, rol, equipos, administración y configuración */
 const enlace = (href, ic, titulo, detalle) => `<li class="info"><a class="enlace" href="${href}">
@@ -26,9 +26,9 @@ const enlace = (href, ic, titulo, detalle) => `<li class="info"><a class="enlace
 async function editarRefresco(){
   const actual = App.me?.config?.refresco_seg || CONFIG.REFRESCO_SEG;
   const f = await App.formulario({ titulo:"Actualización de pantallas", enviar:"Guardar", campos:[
-    { tipo:"nota", texto:"Cada cuánto se actualizan solas las pantallas de todos los usuarios. Menos segundos = todo más al día, pero más consultas al servidor. Recomendado: 10 segundos." },
+    { tipo:"nota", texto:"Cada cuánto se actualizan solas las pantallas de todos los usuarios. Menos segundos = todo más al día, pero más consultas al servidor. Recomendado: 20 segundos (igual que n8n)." },
     { id:"segundos", etiqueta:"Actualizar cada", tipo:"select", valor:String(actual),
-      opciones:[5, 10, 15, 30, 60, 120, 300].map(x => ({ valor:String(x), texto: x < 60 ? `${x} segundos` : `${x / 60} minuto${x > 60 ? "s" : ""}` })) },
+      opciones:[5, 10, 15, 20, 30, 60, 120, 300].map(x => ({ valor:String(x), texto: x < 60 ? `${x} segundos` : `${x / 60} minuto${x > 60 ? "s" : ""}` })) },
     { id:"justificacion", etiqueta:"Justificación (queda en la auditoría)", tipo:"textarea", requerido:true, min:10, ayuda:"Ej.: Menos carga en el servidor en horario nocturno" } ] });
   if (!f) return;
   const r = await App.enviar("PUT", "/config/actualizacion", { segundos:Number(f.segundos), justificacion:f.justificacion }, "Listo: las pantallas se actualizan con el nuevo tiempo");
