@@ -112,7 +112,7 @@ const ReglasRBAC = (() => {
     "asignaciones_liberar","escalamientos_detener","debates_ins","debates_upd","participantes_ins","participantes_upd",
     "mensajes_ins","mensajes_upd","incidentes_ins","notificaciones","notificaciones_leer","auditoria","correos",
     "sesiones_ins","sesiones_cerrar","sesiones_revocar_otras","catalogo_servicios","inc_colaboradores_ins","colaboradores_del",
-    "pasos_ins","pasos_hechos","pasos_cancelar"];
+    "pasos_ins","pasos_hechos","pasos_cancelar","incidentes_cerrar"];
 
   /* ---------- Utilidades ---------- */
   const txt    = v => String(v ?? "").trim();
@@ -1312,7 +1312,7 @@ const ReglasRBAC = (() => {
     const prioridad = i?.prioridad ?? d.prioridad ?? null;
     return {
       inc:d.inc, titulo:i?.titulo || d.titulo, prioridad, severidad: prioridad == null ? null : sevDe(raw, prioridad), categoria: vistaCategoria(raw, prioridad),
-      sla: i ? slaDe(raw, i) : null, puede_cambiar_categoria: i ? puedeCambiarCat(raw, auth, i) : false,
+      sla: i ? slaDe(raw, i) : null, puede_cambiar_categoria: i ? puedeCambiarCat(raw, auth, i) : false, puede_cerrar: i ? puedeCerrarInc(raw, auth, i) : false,
       abierto:!!i, inicio:iso(i?.inicio), afectados:i?.afectados ?? null, descripcion: txt(i?.descripcion) || null,
       servicios: arr(i?.servicios).map(id => { const s = raw.servicios.find(x => x.id === id); return { id, nombre:s?.nombre || id, red:s?.red || null }; }),
       puedo_sumar_equipo: equiposParaSumar(raw, auth, i),
@@ -1416,6 +1416,10 @@ const ReglasRBAC = (() => {
   // ¿Hay algún equipo del INC escalando (nivel 1 o más avisado) sin que nadie lo tome?
   const escaladoInc = (raw, i) => arr(i.equipos).some(t => incEquipo(raw, i.inc, t).estado_equipo === "pendiente" && (corridaDe(raw, i.inc, t)?.nivel_actual || 0) >= 1);
   const puedeCambiarCat = (raw, auth, i) => !!auth && arr(i.equipos).some(t => puede(auth, "editar_inc", { team_id:t }, raw));
+  // Jefes/Gestores y Administradores conducen: no toman INC (lo toma un Operador), pero son los que lo cierran
+  const jefeOMas = (raw, auth) => !!auth && (auth.es_admin || !!rolDef(raw, auth.rol)?.puede_ser_responsable);
+  const puedeCerrarInc = (raw, auth, i) => !!auth && (auth.es_admin
+    || (jefeOMas(raw, auth) && arr(i.equipos).some(t => puede(auth, "cerrar_inc", { team_id:t }, raw))));
 
   // POST /incidentes/:inc/categoria { prioridad_tipo, grave, motivo } — WF49c: la categoría de un INC puede cambiar
   function cambiarCategoriaInc(e, auth, raw){
@@ -1691,7 +1695,7 @@ const ReglasRBAC = (() => {
     const out = [];
     if (!auth) return out;
     const ctx = { team_id:st.team_id };
-    if (["pendiente", "reconocido"].includes(st.estado_equipo) && st.asignado_id !== auth.id && puede(auth, "tomar_inc", ctx, raw)) {
+    if (["pendiente", "reconocido"].includes(st.estado_equipo) && st.asignado_id !== auth.id && !jefeOMas(raw, auth) && puede(auth, "tomar_inc", ctx, raw)) {
       // Varias personas pueden trabajar el mismo INC: si alguien ya lo tiene, "Unirme" suma sin sacárselo; "Tomarlo yo" lo traspasa
       if (st.asignado_id && !arr(st.colaboradores).includes(auth.id)) out.push({ accion:"unirse", etiqueta:"Unirme" });
       out.push({ accion:"tomar", etiqueta: st.asignado_id ? "Tomarlo yo" : "Tomar" });
@@ -1731,8 +1735,11 @@ const ReglasRBAC = (() => {
     if (i.equipos.includes(teamId)) return k.fallo(409, "EQUIPO_YA_EN_INC", `${t.nombre} ya está en el incidente`);
     if (!auth.equipos.some(x => x.id === teamId)) return k.fallo(403, "NO_ES_DE_TU_EQUIPO", "Solo podés sumar un equipo al que pertenecés");
     const p = k.permiso("agregar_equipo", { team_id:teamId }); if (p) return p;
-    k.plan.inc_equipo_upd.push({ inc:i.inc, team_id:teamId, incident_id:null, estado_equipo:"reconocido", asignado_id:auth.id, reconocido_por:auth.id, reconocido_en:k.ahora });
-    k.aud("INC_EQUIPO_SUMADO", "incidente", i.inc, teamId, { antes:{ equipos:i.equipos.length }, despues:{ equipos:i.equipos.length + 1, asignado_id:auth.id } });
+    // Un Operador que suma su equipo lo trabaja él; un Jefe o Administrador lo suma pendiente (lo toma un Operador)
+    const jefe = jefeOMas(raw, auth), asignado_id = jefe ? null : auth.id;
+    k.plan.inc_equipo_upd.push({ inc:i.inc, team_id:teamId, incident_id:null, estado_equipo: jefe ? "pendiente" : "reconocido", asignado_id,
+      reconocido_por: jefe ? null : auth.id, reconocido_en: jefe ? null : k.ahora });
+    k.aud("INC_EQUIPO_SUMADO", "incidente", i.inc, teamId, { antes:{ equipos:i.equipos.length }, despues:{ equipos:i.equipos.length + 1, asignado_id } });
     planSumarAlChat(k, raw, auth, i.inc, `🧩 ${auth.nombre} sumó a ${t.nombre} al incidente`);
     k.notificar(unicos([...i.equipos.map(id => responsable(raw, id)?.user_id), responsable(raw, teamId)?.user_id]).filter(id => id && id !== auth.id),
       `${i.inc} · equipo sumado`, `${auth.nombre} sumó a ${t.nombre} al incidente.`, teamId, ["app"], { tipo:"general", enlace:"incidentes.html" });
@@ -1746,10 +1753,13 @@ const ReglasRBAC = (() => {
     const k = contexto(e, auth, raw, "incidente"), b = e.body, inc = txt(e.params.inc).toUpperCase(), teamId = txt(b.equipo_id);
     k.team_id = equipo(raw, teamId) ? teamId : null;
     const no = sinSesion(k); if (no) return no;
-    const accion = txt(b.accion).toLowerCase(), PERM = { tomar:"tomar_inc", reconocer:"ack_inc", unirse:"tomar_inc", sumar_equipo:"agregar_equipo" };
-    if (!PERM[accion]) return k.fallo(400, "ACCION_INVALIDA", "La acción debe ser tomar, reconocer, unirse o sumar_equipo");
+    const accion = txt(b.accion).toLowerCase(), PERM = { tomar:"tomar_inc", reconocer:"ack_inc", unirse:"tomar_inc", sumar_equipo:"agregar_equipo", cerrar:"cerrar_inc" };
+    if (!PERM[accion]) return k.fallo(400, "ACCION_INVALIDA", "La acción debe ser tomar, reconocer, unirse, sumar_equipo o cerrar");
     const i = incidenteDe(raw, inc);
     if (!i) return k.fallo(404, "INC_INEXISTENTE", "El incidente no existe o ya no está abierto");
+    if (accion === "cerrar") return cerrarInc(k, auth, raw, i);
+    if ((accion === "tomar" || accion === "unirse") && jefeOMas(raw, auth))
+      return k.fallo(403, "SOLO_OPERADORES", "Los Jefes y Administradores no toman incidentes: lo toma un Operador del equipo");
     if (accion === "sumar_equipo") return sumarEquipoInc(k, auth, raw, i, teamId);
     if (!i.equipos.includes(teamId)) return k.fallo(422, "EQUIPO_INVALIDO", "Ese equipo no está en el incidente");
     const p = k.permiso(PERM[accion], { team_id:teamId }); if (p) return p;
@@ -1789,6 +1799,30 @@ const ReglasRBAC = (() => {
     if (resp) k.notificar([resp.user_id], `${inc} · ${accion === "tomar" ? "tomado" : "reconocido"} por ${auth.nombre}`,
       `${t.nombre}${run?.estado === "esperando" ? ` · escalamiento detenido en el nivel ${run.nivel_actual}` : ""}`, teamId, ["app"], { tipo:"general", enlace:"incidentes.html" });
     return k.exito(200, { tipo:"incidente", inc });
+  }
+
+  // Cerrar el INC (Jefe/Gestor de un equipo del INC, o Administrador): queda cerrado en el NOC aunque la herramienta
+  // lo siga mandando abierto (SQL 033), se corta el escalamiento de todos sus equipos y se avisa a quienes lo trabajaban.
+  function cerrarInc(k, auth, raw, i){
+    const inc = i.inc;
+    k.team_id = i.equipos[0] || null;
+    if (!puedeCerrarInc(raw, auth, i)) return k.fallo(403, "SOLO_JEFES", "Solo los Jefes de los equipos del INC y los Administradores pueden cerrarlo");
+    const motivo = txt(k.e.body.motivo || k.e.body.justificacion).slice(0, 300);
+    if (motivo.length < 5) return k.fallo(422, "MOTIVO_REQUERIDO", "Contá por qué se cierra el INC (mínimo 5 caracteres)");
+    k.plan.incidentes_cerrar.push({ inc, incident_id:i.id || null });
+    const avisar = [];
+    for (const t of i.equipos) {
+      const st = incEquipo(raw, inc, t), run = corridaDe(raw, inc, t);
+      if (run && run.estado === "esperando") k.plan.escalamientos_upd.push({ ...run, estado:"fin", motivo:"cerrado", proximo_en:null, fin_en:k.ahora });
+      k.plan.pasos_cancelar.push({ inc, team_id:t });
+      avisar.push(st.asignado_id, ...arr(st.colaboradores), responsable(raw, t)?.user_id);
+    }
+    k.audEquipos("INC_CERRAR", "incidente", inc, i.equipos, { antes:{ estado:i.estado || "abierto" }, despues:{ estado:"cerrado" } }, { justificacion:motivo });
+    const d = arr(raw.debates).find(x => x.inc === inc && x.estado === "abierto");
+    if (d) mensajeSistema(k, d.id, `🔒 ${auth.nombre} cerró el incidente. Motivo: ${motivo}`);
+    const ids = unicos(avisar).filter(id => id && id !== auth.id && usuario(raw, id)?.estado === "activo");
+    if (ids.length) k.notificar(ids, `${inc} · cerrado por ${auth.nombre}`, `Motivo: ${motivo}`, k.team_id, ["app"], { tipo:"general", enlace:"incidentes.html" });
+    return k.exito(200, { tipo:"incidente", inc }, { cerrado:true });
   }
 
   // PUT /me/disponibilidad — WF47b: cuándo me pueden avisar (la matriz de escalamiento no lo pisa)
@@ -2109,7 +2143,7 @@ const ReglasRBAC = (() => {
     const incidentes = arr(raw.incidentes).slice().sort((a, b) => a.prioridad - b.prioridad || String(a.inicio).localeCompare(String(b.inicio)))
       .map(i => ({ inc:i.inc, titulo:i.titulo, prioridad:i.prioridad, categoria:vistaCategoria(raw, i.prioridad), inicio:iso(i.inicio), servicios:arr(i.servicios),
         equipos:equiposInc(raw, auth, i), puedo_sumar_equipo:equiposParaSumar(raw, auth, i), mio: i.equipos.some(t => auth.equipos.some(x => x.id === t)),
-        sla:slaDe(raw, i), escalado:escaladoInc(raw, i), puede_cambiar_categoria:puedeCambiarCat(raw, auth, i),
+        sla:slaDe(raw, i), escalado:escaladoInc(raw, i), puede_cambiar_categoria:puedeCambiarCat(raw, auth, i), puede_cerrar:puedeCerrarInc(raw, auth, i),
         debate: porInc[i.inc] ? vistaDebate(raw, auth, porInc[i.inc]) : null,
         puede_abrir: !porInc[i.inc] && tiene(auth, "escribir_chat") }));
     const abiertos = new Set(incidentes.map(i => i.inc));
@@ -2843,7 +2877,8 @@ const SimuladorRBAC = (() => {
     let lista = null;
     try { lista = JSON.parse(localStorage.getItem("datosRed5") || "null")?.incidentes; } catch {}
     if (!lista && typeof DATOS_DEMO !== "undefined") lista = DATOS_DEMO.incidentes;
-    return (lista || e.incidentes_demo || []).map(i => {
+    const cerrados = new Set(e.incidentes_cerrados || []);
+    return (lista || e.incidentes_demo || []).filter(i => !cerrados.has(i.inc)).map(i => {
       const asignados = e.incidentes_equipo.filter(x => x.inc === i.inc).map(x => x.team_id);
       const porServicio = e.service_teams.filter(x => (i.servicios || []).includes(x.service_id)).map(x => x.team_id);
       return { inc:i.inc, titulo:i.titulo, prioridad:i.prioridad, grave:i.grave ?? null, inicio:i.inicio || null, servicios:i.servicios || [], afectados:i.afectados ?? null,
@@ -2972,6 +3007,7 @@ const SimuladorRBAC = (() => {
     for (const k of L("sla_avisos")) { e.sla_avisos ||= []; if (!e.sla_avisos.includes(k)) e.sla_avisos.push(k); }
     const incidentesCambiados = L("incidentes_upd");      // cambio de categoría: se aplica al tablero (o a los INC del demo)
     for (const c of incidentesCambiados) { const x = (e.incidentes_demo || []).find(y => y.inc === c.inc); if (x) Object.assign(x, { prioridad:c.prioridad, grave:c.grave }); }     // configuración (p. ej. política de notificaciones)
+    for (const c of L("incidentes_cerrar")) { e.incidentes_cerrados ||= []; if (!e.incidentes_cerrados.includes(c.inc)) e.incidentes_cerrados.push(c.inc); }   // SQL 033
     for (const c of L("inc_equipo_upd")) {    // estado del equipo en el INC (tomar / reconocer)
       let x = e.incidentes_equipo.find(y => y.inc === c.inc && y.team_id === c.team_id);
       if (!x) e.incidentes_equipo.push(x = { incident_id:c.incident_id || null, inc:c.inc, team_id:c.team_id });

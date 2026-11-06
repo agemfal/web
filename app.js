@@ -274,6 +274,7 @@ const C = {
           : `<button class="boton chico primario" data-accion="inc:${mio.accion}:${inc}:${esc(mio.id)}">${icono("mano")}${mio.accion === "tomar" ? "Tomar" : mio.accion === "unirse" ? "Unirme" : "Sumar"} · ${esc(mio.nombre)}</button>`).join("")}
         ${abrir}
         ${i.puede_cambiar_categoria ? `<button class="boton chico" data-accion="cat:${inc}:${i.prioridad}">${icono("cambiar")}Cambiar categoría</button>` : ""}
+        ${i.puede_cerrar ? `<button class="boton chico peligro" data-accion="cerrarinc:${inc}">${icono("check")}Cerrar INC</button>` : ""}
         ${eqs.length ? `<button class="boton chico" data-accion="vereq:${inc}" aria-expanded="${abiertos}">${icono("equipo")}${abiertos ? "Ocultar equipos" : `Ver equipos (${eqs.length})`}</button>` : ""}
       </div>
       ${abiertos ? C.equiposInc(i) : ""}
@@ -932,6 +933,21 @@ const App = {
     });
   },
 
+  // Cerrar un INC (Jefes de sus equipos y Administradores): pide el motivo y da 5 segundos para deshacer
+  async cerrarInc(inc){
+    const f = await this.formulario({ titulo:`Cerrar ${inc}`, enviar:"Cerrar INC", campos:[
+      { tipo:"nota", texto:"El INC queda cerrado en el NOC aunque la herramienta lo siga mostrando abierto. Se corta el escalamiento y se avisa a quienes lo trabajaban." },
+      { id:"motivo", etiqueta:"Motivo (queda en la auditoría)", tipo:"textarea", requerido:true, min:5, ayuda:"Ej.: Servicio normalizado y validado con el cliente" } ] });
+    if (!f) return;
+    this.diferir(`cerrar:${inc}`, `${inc} se va a cerrar. Se confirma en 5 segundos.`, async salida => {
+      const r = await this.api("POST", `/incidentes/${encodeURIComponent(inc)}/acciones`, { accion:"cerrar", motivo:f.motivo }, { keepalive:salida });
+      if (salida) return;
+      if (!r.cuerpo.ok) { this.aviso(r.cuerpo.error.mensaje, 4000); return this.redibujar(); }
+      this.aviso(`${inc} cerrado`, 3000);
+      this.pagina?.alCambiarInc?.(r.cuerpo.data);
+    });
+  },
+
   // URL del webhook de n8n para el demo: la de Perfil (este navegador) o la de CONFIG
   webhookN8n(){ try { return localStorage.getItem("n8nWebhookInc") || CONFIG.N8N_WEBHOOK_INC; } catch { return CONFIG.N8N_WEBHOOK_INC; } },
   // Demo: manda el cambio de categoría a n8n (mismo contenido que guardaría WF49c en PostgreSQL)
@@ -970,6 +986,7 @@ const App = {
     if (id.startsWith("abririnc:")) return this.abrirInc(id.slice(9));
     if (id.startsWith("deshacer:")) return this.deshacer(id.slice(9));
     if (id.startsWith("vereq:")) { const inc = id.slice(6); this.equiposAbiertos.has(inc) ? this.equiposAbiertos.delete(inc) : this.equiposAbiertos.add(inc); return this.redibujar(); }
+    if (id.startsWith("cerrarinc:")) return this.cerrarInc(id.slice(10));
     if (id.startsWith("cat:")) { const [, inc, p] = id.split(":"); return this.cambiarCategoria(inc, Number(p)); }
     this.aviso(`"${el?.textContent.trim() || id}" disponible próximamente`);
   }
